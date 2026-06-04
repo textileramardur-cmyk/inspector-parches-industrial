@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monitor PC | Inspector de Parches</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="monitor-shell">
+    <header class="monitor-header">
+      <div>
+        <p class="eyebrow">Monitor en vivo</p>
+        <h1>Dashboard de inspección</h1>
+      </div>
+      <div class="monitor-connect">
+        <input id="codeInput" maxlength="6" placeholder="ABC123" autocomplete="off">
+        <button id="connectBtn" class="primary">Vincular</button>
+      </div>
+    </header>
+
+    <section class="monitor-status" id="connectionState">Esperando código de sesión.</section>
+
+    <section class="kpi-row">
+      <article class="kpi status" id="monitorStatusCard"><span>Estado</span><strong id="monitorStatus">---</strong></article>
+      <article class="kpi"><span>ΔX</span><strong id="monitorDx">-- mm</strong></article>
+      <article class="kpi"><span>ΔY</span><strong id="monitorDy">-- mm</strong></article>
+      <article class="kpi"><span>Ángulo</span><strong id="monitorAngle">--°</strong></article>
+      <article class="kpi"><span>Score</span><strong id="monitorScore">--%</strong></article>
+    </section>
+
+    <section class="dashboard-grid">
+      <article class="panel large">
+        <div class="panel-title"><h2>Plano geométrico</h2><span id="lastUpdate">Sin datos</span></div>
+        <canvas id="geometryCanvas" width="960" height="540"></canvas>
+      </article>
+      <article class="panel">
+        <div class="panel-title"><h2>Telemetría</h2></div>
+        <dl class="telemetry-list">
+          <dt>Sesión</dt><dd id="sessionValue">---</dd>
+          <dt>px/mm</dt><dd id="pxmmValue">---</dd>
+          <dt>Parche</dt><dd id="patchValue">---</dd>
+          <dt>Texto</dt><dd id="textValue">---</dd>
+          <dt>Estabilidad</dt><dd id="stableValue">---</dd>
+          <dt>Mensaje</dt><dd id="messageValue">---</dd>
+        </dl>
+      </article>
+    </section>
+  </main>
+
+  <script src="/static/monitor.js"></script>
+</body>
+</html>
