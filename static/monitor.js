@@ -11,7 +11,7 @@
   let ws = null;
   let history = [];
 
-  const saved = localStorage.getItem('inspector_v9_monitor_session') || '';
+  const saved = localStorage.getItem('inspector_v10_monitor_session') || '';
   els.sessionInput.value = saved;
 
   els.btnConnect.addEventListener('click', connect);
@@ -21,7 +21,7 @@
   function connect() {
     const code = els.sessionInput.value.trim().toUpperCase();
     if (!code) return;
-    localStorage.setItem('inspector_v9_monitor_session', code);
+    localStorage.setItem('inspector_v10_monitor_session', code);
     try { if (ws) ws.close(); } catch {}
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(`${proto}://${location.host}/ws/monitor/${code}`);

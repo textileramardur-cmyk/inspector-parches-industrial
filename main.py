@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-app = FastAPI(title="Inspector de Parches Industrial", version="9.0.0")
+app = FastAPI(title="Inspector de Parches Industrial", version="10.0.0")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # session_code -> monitor sockets
@@ -32,7 +32,7 @@ async def root_head():
 
 @app.get("/health")
 async def health():
-    return JSONResponse({"ok": True, "service": "inspector-parches-industrial", "version": "9.0.0"})
+    return JSONResponse({"ok": True, "service": "inspector-parches-industrial", "version": "10.0.0"})
 
 
 @app.get("/captura")
