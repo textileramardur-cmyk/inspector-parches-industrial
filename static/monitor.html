@@ -1,53 +1,79 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Monitor PC | Inspector de Parches</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monitor | Inspector de Parches</title>
+  <link rel="stylesheet" href="/static/styles.css" />
 </head>
-<body>
-  <main class="monitor-shell">
-    <header class="monitor-header">
+<body class="page monitor-page">
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Inspector industrial · V2</p>
+      <h1>Monitor PC</h1>
+    </div>
+    <div class="monitor-connect">
+      <input id="sessionInput" maxlength="6" placeholder="ABC123" autocomplete="off" />
+      <button id="btnConnect" class="btn primary">Conectar</button>
+    </div>
+  </header>
+
+  <main class="layout monitor-layout">
+    <section class="panel hero-status">
       <div>
-        <p class="eyebrow">Monitor en vivo</p>
-        <h1>Dashboard de inspección</h1>
+        <span class="small-muted">Estado de inspección</span>
+        <div id="monitorVerdict" class="monitor-verdict">SIN DATOS</div>
       </div>
-      <div class="monitor-connect">
-        <input id="codeInput" maxlength="6" placeholder="ABC123" autocomplete="off">
-        <button id="connectBtn" class="primary">Vincular</button>
+      <div class="score-circle">
+        <span id="monitorScore">--</span>
+        <small>score</small>
       </div>
-    </header>
-
-    <section class="monitor-status" id="connectionState">Esperando código de sesión.</section>
-
-    <section class="kpi-row">
-      <article class="kpi status" id="monitorStatusCard"><span>Estado</span><strong id="monitorStatus">---</strong></article>
-      <article class="kpi"><span>ΔX</span><strong id="monitorDx">-- mm</strong></article>
-      <article class="kpi"><span>ΔY</span><strong id="monitorDy">-- mm</strong></article>
-      <article class="kpi"><span>Ángulo</span><strong id="monitorAngle">--°</strong></article>
-      <article class="kpi"><span>Score</span><strong id="monitorScore">--%</strong></article>
     </section>
 
-    <section class="dashboard-grid">
-      <article class="panel large">
-        <div class="panel-title"><h2>Plano geométrico</h2><span id="lastUpdate">Sin datos</span></div>
-        <canvas id="geometryCanvas" width="960" height="540"></canvas>
-      </article>
-      <article class="panel">
-        <div class="panel-title"><h2>Telemetría</h2></div>
-        <dl class="telemetry-list">
-          <dt>Sesión</dt><dd id="sessionValue">---</dd>
-          <dt>px/mm</dt><dd id="pxmmValue">---</dd>
-          <dt>Parche</dt><dd id="patchValue">---</dd>
-          <dt>Texto</dt><dd id="textValue">---</dd>
-          <dt>Estabilidad</dt><dd id="stableValue">---</dd>
-          <dt>Mensaje</dt><dd id="messageValue">---</dd>
-        </dl>
-      </article>
+    <section class="panel monitor-visual-panel">
+      <div class="section-title-row">
+        <h2>Esquema geométrico</h2>
+        <span id="monitorConnection" class="connection-chip">Desconectado</span>
+      </div>
+      <canvas id="schemaCanvas" width="760" height="460"></canvas>
+      <p class="note">El monitor no recibe video. Recibe telemetría y dibuja una representación geométrica del parche y texto.</p>
+    </section>
+
+    <section class="panel-stack monitor-metrics">
+      <section class="panel">
+        <h2>Medición principal</h2>
+        <div class="metric-grid three">
+          <div class="metric"><span>ΔX</span><strong id="mDx">--</strong></div>
+          <div class="metric"><span>ΔY</span><strong id="mDy">--</strong></div>
+          <div class="metric"><span>Ángulo</span><strong id="mAngle">--</strong></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Tamaño</h2>
+        <div class="metric-grid two">
+          <div class="metric"><span>Parche</span><strong id="mPatch">--</strong></div>
+          <div class="metric"><span>Texto</span><strong id="mText">--</strong></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Distancia texto-borde</h2>
+        <div class="edge-grid">
+          <div><span>Izq.</span><strong id="mLeft">--</strong></div>
+          <div><span>Der.</span><strong id="mRight">--</strong></div>
+          <div><span>Sup.</span><strong id="mTop">--</strong></div>
+          <div><span>Inf.</span><strong id="mBottom">--</strong></div>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <h2>Últimas lecturas</h2>
+        <div id="readingLog" class="reading-log"></div>
+      </section>
     </section>
   </main>
 
-  <script src="/static/monitor.js"></script>
+  <script defer src="/static/monitor.js"></script>
 </body>
 </html>

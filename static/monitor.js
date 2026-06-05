@@ -1,53 +1,42 @@
 (() => {
-  'use strict';
+  const $ = (id) => document.getElementById(id);
 
-  const canvas = document.getElementById('geometryCanvas');
-  const ctx = canvas.getContext('2d');
-
-  const els = {
-    codeInput: document.getElementById('codeInput'),
-    connectBtn: document.getElementById('connectBtn'),
-    connectionState: document.getElementById('connectionState'),
-    monitorStatusCard: document.getElementById('monitorStatusCard'),
-    monitorStatus: document.getElementById('monitorStatus'),
-    monitorDx: document.getElementById('monitorDx'),
-    monitorDy: document.getElementById('monitorDy'),
-    monitorAngle: document.getElementById('monitorAngle'),
-    monitorScore: document.getElementById('monitorScore'),
-    lastUpdate: document.getElementById('lastUpdate'),
-    sessionValue: document.getElementById('sessionValue'),
-    pxmmValue: document.getElementById('pxmmValue'),
-    patchValue: document.getElementById('patchValue'),
-    textValue: document.getElementById('textValue'),
-    stableValue: document.getElementById('stableValue'),
-    messageValue: document.getElementById('messageValue'),
+  const dom = {
+    input: $("sessionInput"),
+    btn: $("btnConnect"),
+    connection: $("monitorConnection"),
+    verdict: $("monitorVerdict"),
+    score: $("monitorScore"),
+    canvas: $("schemaCanvas"),
+    dx: $("mDx"),
+    dy: $("mDy"),
+    angle: $("mAngle"),
+    patch: $("mPatch"),
+    text: $("mText"),
+    left: $("mLeft"),
+    right: $("mRight"),
+    top: $("mTop"),
+    bottom: $("mBottom"),
+    log: $("readingLog"),
   };
 
-  const state = { ws: null, code: null, lastPayload: null };
+  const ctx = dom.canvas.getContext("2d");
+  const state = { ws: null, session: null, last: null, log: [] };
 
-  const COLORS = {
-    ok: '#138a42',
-    bad: '#c62828',
-    warn: '#b26a00',
-    cyan: '#0f8f88',
-    ink: '#0b1f33',
-    muted: '#63758a',
-    grid: '#d9e3ee',
-  };
+  drawEmpty();
 
-  function cleanCode(value) {
-    return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
-  }
+  dom.btn.addEventListener("click", connect);
+  dom.input.addEventListener("input", () => {
+    dom.input.value = dom.input.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+  });
+  dom.input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") connect();
+  });
 
-  function wsBaseUrl() {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${location.host}`;
-  }
-
-  function connect(code) {
-    const clean = cleanCode(code);
-    if (!/^[A-Z]{3}[0-9]{3}$/.test(clean)) {
-      setConnection('Código inválido. Usa formato ABC123. La burocracia mínima, qué emoción.');
+  function connect() {
+    const code = dom.input.value.trim().toUpperCase();
+    if (!/^[A-Z]{3}\d{3}$/.test(code)) {
+      setConnection("Código inválido", false);
       return;
     }
 
@@ -55,219 +44,212 @@
       try { state.ws.close(); } catch (_) {}
     }
 
-    state.code = clean;
-    els.codeInput.value = clean;
-    els.sessionValue.textContent = clean;
-    setConnection(`Conectando a sesión ${clean}...`);
+    state.session = code;
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const url = `${proto}://${location.host}/ws/${code}/monitor`;
+    state.ws = new WebSocket(url);
 
-    const ws = new WebSocket(`${wsBaseUrl()}/ws/monitor/${clean}`);
-    state.ws = ws;
+    setConnection(`Conectando ${code}…`, false);
 
-    ws.addEventListener('open', () => setConnection(`Monitor vinculado a ${clean}. Esperando telemetría del teléfono.`));
-    ws.addEventListener('close', () => setConnection('Monitor desconectado.'));
-    ws.addEventListener('error', () => setConnection('Error de conexión WebSocket.'));
-    ws.addEventListener('message', (ev) => {
+    state.ws.onopen = () => {
+      setConnection(`Conectado a ${code}`, true);
+      state.ws.send("last");
+    };
+    state.ws.onmessage = (event) => {
       try {
-        const payload = JSON.parse(ev.data);
-        handlePayload(payload);
-      } catch (_) {}
-    });
+        const payload = JSON.parse(event.data);
+        if (payload.type === "inspection") update(payload);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    state.ws.onclose = () => setConnection("Desconectado", false);
+    state.ws.onerror = () => setConnection("Error de conexión", false);
   }
 
-  function handlePayload(payload) {
-    if (payload.type === 'session') {
-      if (payload.last_payload) handlePayload(payload.last_payload);
-      setConnection(payload.has_capture ? `Sesión ${payload.code} activa.` : `Sesión ${payload.code} sin captura móvil todavía.`);
+  function update(payload) {
+    state.last = payload;
+    updateVerdict(payload);
+    updateMetrics(payload);
+    drawSchema(payload);
+    addLog(payload);
+  }
+
+  function updateVerdict(payload) {
+    dom.verdict.textContent = payload.verdict || "SIN DATOS";
+    dom.verdict.className = "monitor-verdict " + verdictClass(payload.verdict);
+    dom.score.textContent = Number.isFinite(payload.score) ? `${payload.score}%` : "--";
+  }
+
+  function updateMetrics(payload) {
+    const m = payload.measurements;
+    const a = m && m.alignment ? m.alignment : null;
+    dom.dx.textContent = a ? fmtMmSigned(a.offsetXmm) : "--";
+    dom.dy.textContent = a ? fmtMmSigned(a.offsetYmm) : "--";
+    dom.angle.textContent = a ? `${a.angleDeg.toFixed(1)}°` : "--";
+    dom.left.textContent = a ? fmtMm(a.edges.left) : "--";
+    dom.right.textContent = a ? fmtMm(a.edges.right) : "--";
+    dom.top.textContent = a ? fmtMm(a.edges.top) : "--";
+    dom.bottom.textContent = a ? fmtMm(a.edges.bottom) : "--";
+
+    if (m && m.patch) dom.patch.textContent = `${m.patch.widthMm.toFixed(1)} × ${m.patch.heightMm.toFixed(1)} mm`;
+    else dom.patch.textContent = "--";
+
+    if (m && m.text) dom.text.textContent = `${m.text.widthMm.toFixed(1)} × ${m.text.heightMm.toFixed(1)} mm`;
+    else dom.text.textContent = "--";
+  }
+
+  function drawSchema(payload) {
+    const w = dom.canvas.width;
+    const h = dom.canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#fbfdff";
+    ctx.fillRect(0, 0, w, h);
+
+    const m = payload.measurements;
+    if (!m || !m.patch) {
+      drawCenteredText("Esperando medición del celular…", "#687789");
       return;
     }
-    if (payload.type === 'capture_connected') {
-      setConnection(`Captura móvil conectada en ${payload.code}.`);
-      return;
-    }
-    if (payload.type === 'capture_disconnected') {
-      setConnection(`Captura móvil desconectada en ${payload.code}.`);
-      return;
-    }
-    if (payload.type !== 'metrics') return;
 
-    state.lastPayload = payload;
-    updateKpis(payload);
-    drawGeometry(payload);
-  }
-
-  function updateKpis(p) {
-    const m = p.metrics;
-    const status = p.status || 'INESTABLE';
-    els.monitorStatus.textContent = status;
-    els.monitorStatusCard.className = `kpi status ${statusClass(status)}`;
-    els.monitorDx.textContent = m ? `${m.dxMm.toFixed(1)} mm` : '-- mm';
-    els.monitorDy.textContent = m ? `${m.dyMm.toFixed(1)} mm` : '-- mm';
-    els.monitorAngle.textContent = m ? `${m.angleDeg.toFixed(1)}°` : '--°';
-    els.monitorScore.textContent = m ? `${Math.round(m.score)}%` : '--%';
-    els.lastUpdate.textContent = p.server_time ? new Date(p.server_time).toLocaleTimeString() : new Date().toLocaleTimeString();
-    els.sessionValue.textContent = p.code || state.code || '---';
-    els.pxmmValue.textContent = p.pxPerMm ? `${p.pxPerMm.toFixed(2)} px/mm` : '---';
-    els.patchValue.textContent = p.patch ? `${p.patch.size.w.toFixed(0)}×${p.patch.size.h.toFixed(0)} px · ${p.patch.angle.toFixed(1)}°` : '---';
-    els.textValue.textContent = p.text ? `${p.text.bbox.w.toFixed(0)}×${p.text.bbox.h.toFixed(0)} px · ${p.text.angle.toFixed(1)}°` : '---';
-    els.stableValue.textContent = p.stable ? 'Estable' : 'Inestable';
-    els.messageValue.textContent = p.message || '---';
-  }
-
-  function drawGeometry(p) {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawGrid();
-
-    const frame = p.frame || { w: 1280, h: 720 };
-    const scale = Math.min(canvas.width / frame.w, canvas.height / frame.h);
-    const ox = (canvas.width - frame.w * scale) / 2;
-    const oy = (canvas.height - frame.h * scale) / 2;
+    const patch = m.patch;
+    const text = m.text;
+    const scale = Math.min((w * 0.62) / Math.max(patch.widthMm, 1), (h * 0.62) / Math.max(patch.heightMm, 1));
+    const cx = w / 2;
+    const cy = h / 2;
+    const pw = patch.widthMm * scale;
+    const ph = patch.heightMm * scale;
 
     ctx.save();
-    ctx.translate(ox, oy);
-    ctx.scale(scale, scale);
+    ctx.translate(cx, cy);
+    ctx.rotate(degToRad(patch.angleDeg || 0));
 
-    ctx.strokeStyle = COLORS.grid;
-    ctx.lineWidth = 2 / scale;
-    ctx.strokeRect(0, 0, frame.w, frame.h);
-
-    if (p.calibration?.rect) drawRotatedRect(p.calibration.rect, COLORS.cyan, 3 / scale, 'CAL 5×5');
-    const statusColor = p.status === 'OK' ? COLORS.ok : p.status === 'MAL' ? COLORS.bad : COLORS.warn;
-    if (p.patch?.rect) {
-      drawRotatedRect(p.patch.rect, statusColor, 4 / scale, 'PARCHE');
-      drawCross(p.patch.center, statusColor, 16 / scale);
-      drawAxis(p.patch.center, p.patch.angle, 120 / scale, statusColor);
-    }
-    if (p.text?.bbox) {
-      drawBbox(p.text.bbox, COLORS.ink, 3 / scale, 'TEXTO');
-      drawCross(p.text.center, COLORS.ink, 14 / scale);
-      drawAxis(p.text.center, p.text.angle, 95 / scale, COLORS.ink);
-    }
-    if (p.patch?.center && p.text?.center) drawDelta(p.patch.center, p.text.center, statusColor, 3 / scale);
-
-    ctx.restore();
-    drawSummaryText(p);
-  }
-
-  function drawGrid() {
-    ctx.save();
-    ctx.fillStyle = '#fbfdff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = COLORS.grid;
-    ctx.lineWidth = 1;
-    for (let x = 0; x <= canvas.width; x += 40) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-    }
-    for (let y = 0; y <= canvas.height; y += 40) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-    }
-    ctx.restore();
-  }
-
-  function drawSummaryText(p) {
-    const m = p.metrics;
-    ctx.save();
-    ctx.fillStyle = p.status === 'OK' ? COLORS.ok : p.status === 'MAL' ? COLORS.bad : COLORS.warn;
-    ctx.font = '700 24px Inter, system-ui, sans-serif';
-    const label = m ? `${p.status} · X ${m.dxMm.toFixed(1)} mm · Y ${m.dyMm.toFixed(1)} mm · ${m.angleDeg.toFixed(1)}° · ${Math.round(m.score)}%` : `${p.status || 'INESTABLE'} · ${p.message || ''}`;
-    ctx.fillText(label, 24, 36);
-    ctx.restore();
-  }
-
-  function drawRotatedRect(rect, color, lineWidth, label) {
-    const pts = rotatedRectPoints(rect);
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineWidth;
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-    ctx.closePath();
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = payload.verdict === "OK" ? "#12805c" : payload.verdict === "MAL" ? "#c53030" : "#718096";
+    ctx.lineWidth = 5;
+    roundRect(ctx, -pw / 2, -ph / 2, pw, ph, 14);
+    ctx.fill();
     ctx.stroke();
-    drawLabel(label, pts[0].x, pts[0].y, color);
-    ctx.restore();
-  }
 
-  function drawBbox(b, color, lineWidth, label) {
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineWidth;
-    ctx.strokeRect(b.x, b.y, b.w, b.h);
-    drawLabel(label, b.x, b.y, color);
-    ctx.restore();
-  }
-
-  function drawCross(p, color, size) {
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(1, size / 5);
+    ctx.strokeStyle = "rgba(11,95,255,0.45)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([8, 7]);
     ctx.beginPath();
-    ctx.moveTo(p.x - size, p.y); ctx.lineTo(p.x + size, p.y);
-    ctx.moveTo(p.x, p.y - size); ctx.lineTo(p.x, p.y + size);
+    ctx.moveTo(-pw / 2, 0);
+    ctx.lineTo(pw / 2, 0);
+    ctx.moveTo(0, -ph / 2);
+    ctx.lineTo(0, ph / 2);
     ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (text && m.alignment) {
+      const tx = m.alignment.offsetXmm * scale;
+      const ty = m.alignment.offsetYmm * scale;
+      const tw = Math.max(10, text.widthMm * scale);
+      const th = Math.max(8, text.heightMm * scale);
+      const relAngle = degToRad(m.alignment.angleDeg || 0);
+
+      ctx.save();
+      ctx.translate(tx, ty);
+      ctx.rotate(relAngle);
+      ctx.fillStyle = "rgba(183,121,31,0.14)";
+      ctx.strokeStyle = "#b7791f";
+      ctx.lineWidth = 3;
+      roundRect(ctx, -tw / 2, -th / 2, tw, th, 9);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.strokeStyle = "#34495e";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+
+    drawLegend(payload);
+  }
+
+  function drawLegend(payload) {
+    const m = payload.measurements;
+    const a = m && m.alignment ? m.alignment : null;
+    ctx.save();
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.strokeStyle = "#d9e2ec";
+    roundRect(ctx, 18, 18, 300, 120, 14);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#102033";
+    ctx.font = "800 17px system-ui";
+    ctx.fillText(payload.reason || "Medición", 34, 48);
+    ctx.font = "700 14px system-ui";
+    ctx.fillStyle = "#687789";
+    ctx.fillText(`Parche: ${m.patch.widthMm.toFixed(1)} × ${m.patch.heightMm.toFixed(1)} mm`, 34, 75);
+    if (a) {
+      ctx.fillText(`Centro: X ${fmtMmSigned(a.offsetXmm)} / Y ${fmtMmSigned(a.offsetYmm)}`, 34, 98);
+      ctx.fillText(`Ángulo: ${a.angleDeg.toFixed(1)}°`, 34, 121);
+    }
     ctx.restore();
   }
 
-  function drawAxis(center, angleDeg, len, color) {
-    const a = angleDeg * Math.PI / 180;
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(center.x - Math.cos(a) * len, center.y - Math.sin(a) * len);
-    ctx.lineTo(center.x + Math.cos(a) * len, center.y + Math.sin(a) * len);
-    ctx.stroke();
-    ctx.restore();
+  function drawEmpty() {
+    ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
+    ctx.fillStyle = "#fbfdff";
+    ctx.fillRect(0, 0, dom.canvas.width, dom.canvas.height);
+    drawCenteredText("Introduce el código del celular para recibir telemetría", "#687789");
   }
 
-  function drawDelta(a, b, color, lineWidth) {
+  function drawCenteredText(text, color) {
     ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineWidth;
-    ctx.setLineDash([10, 8]);
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  function drawLabel(label, x, y, color) {
-    ctx.save();
-    ctx.font = '700 14px Inter, sans-serif';
     ctx.fillStyle = color;
-    ctx.fillText(label, x + 6, y - 6);
+    ctx.font = "800 22px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText(text, dom.canvas.width / 2, dom.canvas.height / 2);
     ctx.restore();
   }
 
-  function rotatedRectPoints(rect) {
-    const cx = rect.center.x;
-    const cy = rect.center.y;
-    const w = rect.size.w;
-    const h = rect.size.h;
-    const a = rect.angle * Math.PI / 180;
-    const cos = Math.cos(a);
-    const sin = Math.sin(a);
-    const base = [
-      { x: -w / 2, y: -h / 2 },
-      { x:  w / 2, y: -h / 2 },
-      { x:  w / 2, y:  h / 2 },
-      { x: -w / 2, y:  h / 2 },
-    ];
-    return base.map(p => ({ x: cx + p.x * cos - p.y * sin, y: cy + p.x * sin + p.y * cos }));
+  function addLog(payload) {
+    const m = payload.measurements;
+    const a = m && m.alignment ? m.alignment : null;
+    const row = {
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      verdict: payload.verdict,
+      score: Number.isFinite(payload.score) ? `${payload.score}%` : "--",
+      center: a ? `${fmtMmSigned(a.offsetXmm)} / ${fmtMmSigned(a.offsetYmm)}` : "--",
+    };
+    state.log.unshift(row);
+    state.log = state.log.slice(0, 12);
+    dom.log.innerHTML = state.log.map((r) => `
+      <div class="log-row">
+        <span>${r.time}</span>
+        <strong class="${verdictClass(r.verdict)}">${r.verdict}</strong>
+        <span>${r.score}</span>
+        <span>${r.center}</span>
+      </div>
+    `).join("");
   }
 
-  function setConnection(message) {
-    els.connectionState.textContent = message;
+  function setConnection(text, connected) {
+    dom.connection.textContent = text;
+    dom.connection.className = "connection-chip" + (connected ? " connected" : "");
   }
 
-  function statusClass(status) {
-    if (status === 'OK') return 'ok';
-    if (status === 'MAL') return 'bad';
-    return 'warn';
+  function roundRect(ctx, x, y, w, h, r) {
+    const radius = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.arcTo(x + w, y, x + w, y + h, radius);
+    ctx.arcTo(x + w, y + h, x, y + h, radius);
+    ctx.arcTo(x, y + h, x, y, radius);
+    ctx.arcTo(x, y, x + w, y, radius);
+    ctx.closePath();
   }
 
-  els.codeInput.addEventListener('input', () => { els.codeInput.value = cleanCode(els.codeInput.value); });
-  els.connectBtn.addEventListener('click', () => connect(els.codeInput.value));
-  els.codeInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') connect(els.codeInput.value); });
-  drawGrid();
+  function fmtMm(v) { return Number.isFinite(v) ? `${v.toFixed(1)} mm` : "--"; }
+  function fmtMmSigned(v) { return Number.isFinite(v) ? `${v >= 0 ? "+" : ""}${v.toFixed(1)} mm` : "--"; }
+  function verdictClass(v) { return v === "OK" ? "ok" : v === "MAL" ? "bad" : "unstable"; }
+  function degToRad(deg) { return deg * Math.PI / 180; }
 })();
