@@ -85,9 +85,9 @@
 
   function updateMetrics(payload) {
     const m = payload.measurements;
-    const a = m && m.alignment ? m.alignment : null;
-    dom.dx.textContent = a ? friendlyOffsetX(a.offsetXmm) : "--";
-    dom.dy.textContent = a ? friendlyOffsetY(a.offsetYmm) : "--";
+    const a = payload.comparison || (m && m.alignment ? m.alignment : null);
+    dom.dx.textContent = a ? friendlyOffsetX(a.offsetXmm, Boolean(payload.comparison)) : "--";
+    dom.dy.textContent = a ? friendlyOffsetY(a.offsetYmm, Boolean(payload.comparison)) : "--";
     dom.angle.textContent = a ? `${a.angleDeg.toFixed(1)}°` : "--";
     dom.left.textContent = a ? fmtMm(a.edges.left) : "--";
     dom.right.textContent = a ? fmtMm(a.edges.right) : "--";
@@ -214,12 +214,12 @@
 
   function addLog(payload) {
     const m = payload.measurements;
-    const a = m && m.alignment ? m.alignment : null;
+    const a = payload.comparison || (m && m.alignment ? m.alignment : null);
     const row = {
       time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
       verdict: payload.verdict,
       score: Number.isFinite(payload.score) ? `${payload.score}%` : "--",
-      center: a ? `${friendlyOffsetX(a.offsetXmm)} / ${friendlyOffsetY(a.offsetYmm)}` : "--",
+      center: a ? `${friendlyOffsetX(a.offsetXmm, Boolean(payload.comparison))} / ${friendlyOffsetY(a.offsetYmm, Boolean(payload.comparison))}` : "--",
     };
     state.log.unshift(row);
     state.log = state.log.slice(0, 12);
@@ -249,17 +249,24 @@
     ctx.closePath();
   }
 
-  function friendlyOffsetX(mm) {
+  function friendlyOffsetX(mm, compared) {
     if (!Number.isFinite(mm)) return "--";
-    if (Math.abs(mm) < 0.15) return "Centrado";
+    if (Math.abs(mm) < 0.15) return compared ? "Igual que muestra" : "Centrado";
     return `${Math.abs(mm).toFixed(1)} mm ${mm > 0 ? "derecha" : "izquierda"}`;
   }
-  function friendlyOffsetY(mm) {
+  function friendlyOffsetY(mm, compared) {
     if (!Number.isFinite(mm)) return "--";
-    if (Math.abs(mm) < 0.15) return "Centrado";
+    if (Math.abs(mm) < 0.15) return compared ? "Igual que muestra" : "Centrado";
     return `${Math.abs(mm).toFixed(1)} mm ${mm > 0 ? "abajo" : "arriba"}`;
   }
   function fmtMm(v) { return Number.isFinite(v) ? `${v.toFixed(1)} mm` : "--"; }
-  function verdictClass(v) { return v === "OK" ? "ok" : v === "MAL" ? "bad" : "unstable"; }
+  function verdictClass(v) {
+    if (v === "OK") return "ok";
+    if (v === "MAL") return "bad";
+    if (v === "REVISAR") return "revisar";
+    if (v === "NO LEE") return "nolee";
+    if (v === "MUESTRA") return "muestra";
+    return "unstable";
+  }
   function degToRad(deg) { return deg * Math.PI / 180; }
 })();

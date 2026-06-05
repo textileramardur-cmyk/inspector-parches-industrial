@@ -1,39 +1,26 @@
-# Inspector Industrial de Parches V3
+# Inspector Industrial de Parches V4
 
-Sistema web de inspección visual en tiempo real para parches bordados sobre prendas de tejido de punto.
+Webapp de inspección visual para smartphone + monitor PC en vivo.
 
-## Qué cambió en V3
-
-- Flujo guiado para operador: cámara → tarjeta 7×7 → parche.
-- Botón claro: **Ya puse la tarjeta · Calibrar**.
-- Se eliminaron términos técnicos visibles como “offset X/Y” en la pantalla principal.
-- Ahora se muestra lenguaje operativo: “texto a la derecha”, “texto arriba”, “texto inclinado”.
-- Configuración simple por nivel de exigencia: Normal, Estricto o Flexible.
-- Ajustes avanzados siguen disponibles, pero escondidos.
-- Mejora de detección de texto con varias estrategias:
-  - umbral adaptativo oscuro,
-  - umbral adaptativo claro,
-  - Otsu oscuro,
-  - Otsu claro,
-  - bordes por Canny.
-- El sistema elige el candidato de texto más probable por área, componentes, relleno y posición.
-
-## Flujo de uso
+## Flujo V4
 
 1. Abrir `/captura` en el celular.
-2. Tocar **Iniciar cámara**.
-3. Colocar la tarjeta 7×7 cm con interior negro 5×5 cm dentro de la guía.
-4. Cuando aparezca estable, tocar **Ya puse la tarjeta · Calibrar**.
+2. Iniciar cámara.
+3. Colocar tarjeta física 7×7 cm con cuadro negro interior 5×5 cm.
+4. Tocar **Calibrar tarjeta 7×7** cuando la app indique tarjeta lista.
 5. Retirar la tarjeta.
-6. Colocar el parche dentro de la guía.
-7. Leer resultado: OK, MAL o INESTABLE.
-8. Abrir `/monitor` en PC e ingresar el código del celular.
+6. Colocar un parche bueno.
+7. Tocar **Guardar parche bueno**.
+8. Inspeccionar parches de producción contra esa muestra.
 
-## Rutas
+## Cambios V4
 
-- `/captura`: captura móvil.
-- `/monitor`: monitor PC.
-- `/health`: estado del servicio.
+- Flujo para operador normal: tarjeta → muestra buena → inspección.
+- Ya no se compara contra un centro matemático rígido, sino contra una muestra correcta.
+- Suavizado temporal para reducir brincos en pantalla.
+- Calibración más robusta: Otsu, umbrales fijos, adaptativo y bordes.
+- Si la lectura del texto es insegura, muestra **REVISAR** o **NO LEE**, no rechaza automáticamente.
+- Lenguaje menos técnico en la interfaz.
 
 ## Render
 
@@ -49,6 +36,8 @@ Start command:
 uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
-## Nota operativa
+## Rutas
 
-Si el celular se mueve después de calibrar, hay que volver a calibrar. La escala depende de la distancia entre cámara y tarjeta/parche.
+- `/captura` para el celular.
+- `/monitor` para la PC.
+- `/health` para revisar servicio.

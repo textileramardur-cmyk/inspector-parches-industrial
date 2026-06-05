@@ -366,3 +366,16 @@ input[type="range"] { width: 100%; accent-color: var(--brand); }
   .metric-grid.two, .metric-grid.three, .edge-grid { grid-template-columns: 1fr 1fr; }
   .button-row .btn { flex: 1 1 100%; }
 }
+
+/* V4: flujo de 4 pasos y estados operativos */
+.wizard-strip.four { grid-template-columns: repeat(4, 1fr); }
+.verdict.revisar, .monitor-verdict.revisar { color: var(--warn); }
+.verdict.nolee, .monitor-verdict.nolee { color: var(--unstable); }
+.verdict.muestra, .monitor-verdict.muestra { color: var(--brand-2); }
+.status-dot.revisar { background: var(--warn); }
+.status-dot.nolee { background: var(--unstable); }
+.status-dot.muestra { background: var(--brand-2); }
+.score-line + .score-line { margin-top: 8px; }
+@media (max-width: 820px) {
+  .wizard-strip.four { grid-template-columns: repeat(2, 1fr); }
+}

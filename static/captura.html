@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Captura | Inspector de Parches</title>
+  <title>Captura | Inspector de Parches V4</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body class="page capture-page">
   <header class="topbar">
     <div>
-      <p class="eyebrow">Inspector industrial · V3 UX</p>
+      <p class="eyebrow">Inspector industrial · V4 operador</p>
       <h1>Inspección guiada</h1>
     </div>
     <div class="session-pill">
@@ -20,14 +20,15 @@
 
   <main class="layout capture-layout">
     <section class="video-card">
-      <div class="wizard-strip" aria-label="Flujo de inspección">
+      <div class="wizard-strip four" aria-label="Flujo de inspección">
         <div id="stepCamera" class="wizard-step active"><span>1</span><strong>Cámara</strong><small>Iniciar</small></div>
-        <div id="stepCard" class="wizard-step"><span>2</span><strong>Tarjeta 7×7</strong><small>Calibrar</small></div>
-        <div id="stepPatch" class="wizard-step"><span>3</span><strong>Parche</strong><small>Medir</small></div>
+        <div id="stepCard" class="wizard-step"><span>2</span><strong>Tarjeta</strong><small>7×7</small></div>
+        <div id="stepMaster" class="wizard-step"><span>3</span><strong>Muestra</strong><small>Parche bueno</small></div>
+        <div id="stepPatch" class="wizard-step"><span>4</span><strong>Inspección</strong><small>Revisar</small></div>
       </div>
 
       <div class="operator-instruction" id="operatorInstruction">
-        Toca “Iniciar cámara”. Después la app te pedirá la tarjeta 7×7.
+        Toca “Iniciar cámara”. Luego la app te pedirá la tarjeta 7×7.
       </div>
 
       <div class="video-toolbar">
@@ -43,14 +44,15 @@
         <canvas id="viewCanvas"></canvas>
         <div id="cameraHint" class="camera-hint">
           <strong>Paso 1: inicia la cámara</strong><br />
-          <span>Luego coloca la tarjeta física de 7×7 cm dentro del recuadro de guía.</span>
+          <span>Después coloca la tarjeta física de 7×7 cm dentro del recuadro.</span>
         </div>
       </div>
 
       <div class="button-row">
         <button id="btnCamera" class="btn primary">Iniciar cámara</button>
-        <button id="btnCalibrate" class="btn success" disabled>Ya puse la tarjeta · Calibrar</button>
-        <button id="btnNewPatch" class="btn secondary">Medir otro parche</button>
+        <button id="btnCalibrate" class="btn success" disabled>Calibrar tarjeta 7×7</button>
+        <button id="btnSaveMaster" class="btn success" disabled>Guardar parche bueno</button>
+        <button id="btnNewPatch" class="btn secondary">Reintentar / medir otro</button>
         <button id="btnRecalibrate" class="btn secondary">Volver a calibrar</button>
       </div>
     </section>
@@ -61,22 +63,24 @@
         <p id="nextAction" class="next-action">Inicia la cámara del celular.</p>
         <div class="friendly-status"><span>Tarjeta:</span><strong id="friendlyCard">No detectada</strong></div>
         <div class="friendly-status"><span>Escala:</span><strong id="friendlyScale">Sin calibrar</strong></div>
+        <div class="friendly-status"><span>Muestra buena:</span><strong id="friendlyMaster">Pendiente</strong></div>
         <div class="friendly-status"><span>Texto:</span><strong id="friendlyText">Pendiente</strong></div>
       </section>
 
       <section class="panel result-panel">
-        <h2>Resultado</h2>
+        <h2>Resultado para operador</h2>
         <div class="verdict" id="verdict">ESPERA</div>
-        <div class="score-line"><span>Confianza</span><strong id="scoreValue">--%</strong></div>
+        <div class="score-line"><span>Calidad geométrica</span><strong id="scoreValue">--%</strong></div>
+        <div class="score-line"><span>Seguridad de lectura</span><strong id="readConfidence">--%</strong></div>
         <p class="note" id="reasonText">Todavía no hay una inspección válida.</p>
       </section>
 
       <section class="panel">
-        <h2>Medición que entiende cualquiera</h2>
+        <h2>Medición entendible</h2>
         <div class="metric-grid three">
-          <div class="metric"><span>Texto izquierda/derecha</span><strong id="dxValue">--</strong></div>
-          <div class="metric"><span>Texto arriba/abajo</span><strong id="dyValue">--</strong></div>
-          <div class="metric"><span>Texto inclinado</span><strong id="angleValue">--</strong></div>
+          <div class="metric"><span>Izquierda / derecha</span><strong id="dxValue">--</strong></div>
+          <div class="metric"><span>Arriba / abajo</span><strong id="dyValue">--</strong></div>
+          <div class="metric"><span>Inclinación</span><strong id="angleValue">--</strong></div>
         </div>
         <div class="metric-grid two compact">
           <div class="metric"><span>Tamaño del parche</span><strong id="patchSize">--</strong></div>
@@ -85,10 +89,10 @@
       </section>
 
       <section class="panel">
-        <h2>Distancia del texto a cada borde</h2>
+        <h2>Texto contra bordes</h2>
         <div class="edge-grid">
-          <div><span>Izquierda</span><strong id="edgeLeft">--</strong></div>
-          <div><span>Derecha</span><strong id="edgeRight">--</strong></div>
+          <div><span>Izq.</span><strong id="edgeLeft">--</strong></div>
+          <div><span>Der.</span><strong id="edgeRight">--</strong></div>
           <div><span>Arriba</span><strong id="edgeTop">--</strong></div>
           <div><span>Abajo</span><strong id="edgeBottom">--</strong></div>
         </div>
@@ -102,7 +106,7 @@
           <div class="metric"><span>Estabilidad</span><strong id="stability">--</strong></div>
           <div class="metric"><span>Tarjeta</span><strong id="cardState">No detectada</strong></div>
         </div>
-        <p class="note">La app usa el cuadro negro interior de 5×5 cm para calcular milímetros. El exterior 7×7 sirve como guía visual y validación práctica.</p>
+        <p class="note">La app usa el cuadro negro interior de 5×5 cm para calcular milímetros. Evita tapar la tarjeta con el dedo; si solo la detecta con el dedo, hay reflejo o poco contraste.</p>
       </section>
 
       <section class="panel settings-panel">
@@ -115,16 +119,16 @@
         </select>
         <details class="advanced-settings">
           <summary>Ajustes avanzados</summary>
-          <label class="control-label">Máximo que puede moverse a los lados <span id="tolXLabel">3.0 mm</span></label>
+          <label class="control-label">Diferencia permitida a los lados <span id="tolXLabel">3.0 mm</span></label>
           <input id="tolX" type="range" min="0.5" max="10" step="0.5" value="3" />
 
-          <label class="control-label">Máximo que puede subir o bajar <span id="tolYLabel">3.0 mm</span></label>
-          <input id="tolY" type="range" min="0.5" max="10" step="0.5" value="3" />
+          <label class="control-label">Diferencia permitida arriba/abajo <span id="tolYLabel">3.0 mm</span></label>
+          <input id="tolY" type="range" min="0.5" max="12" step="0.5" value="3" />
 
-          <label class="control-label">Máxima inclinación permitida <span id="tolAngleLabel">5°</span></label>
+          <label class="control-label">Inclinación permitida <span id="tolAngleLabel">5°</span></label>
           <input id="tolAngle" type="range" min="1" max="15" step="1" value="5" />
 
-          <label class="control-label">Mínimo de aceptación <span id="scoreMinLabel">85%</span></label>
+          <label class="control-label">Mínimo para aprobar <span id="scoreMinLabel">85%</span></label>
           <input id="scoreMin" type="range" min="50" max="100" step="1" value="85" />
         </details>
       </section>
@@ -132,7 +136,7 @@
   </main>
 
   <footer class="footer-note">
-    Flujo para operador: iniciar cámara → colocar tarjeta → calibrar → retirar tarjeta → colocar parche → leer resultado.
+    Flujo para operador: iniciar cámara → colocar tarjeta 7×7 → calibrar → colocar parche bueno → guardar muestra → inspeccionar producción.
   </footer>
 
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>

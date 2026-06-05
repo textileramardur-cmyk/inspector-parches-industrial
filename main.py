@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-app = FastAPI(title="Inspector Industrial de Parches", version="3.0.0")
+app = FastAPI(title="Inspector Industrial de Parches", version="4.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -83,7 +83,7 @@ hub = SessionHub()
 
 @app.get("/health")
 def health() -> JSONResponse:
-    return JSONResponse({"ok": True, "service": "inspector-parches-industrial", "version": "3.0.0"})
+    return JSONResponse({"ok": True, "service": "inspector-parches-industrial", "version": "4.0.0"})
 
 
 @app.get("/")
