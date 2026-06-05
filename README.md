@@ -1,44 +1,56 @@
-# Inspector Industrial de Parches V6
+# Inspector de Parches Industrial · V9 robusta
 
-Webapp para inspección visual guiada de parches bordados sobre prendas de tejido de punto.
+Sistema web para inspección visual de parches bordados usando un smartphone y un monitor de PC.
 
-## Cambio clave de V6
+## Enfoque de esta versión
 
-La tarjeta 7×7 deja de ser obligatoria en el flujo normal. Ahora el sistema trabaja con una **muestra maestra**:
+Esta versión está diseñada para un ambiente real de piso, no para una demo perfecta.
 
-1. Fijas el celular.
-2. Colocas un parche correcto.
-3. Marcas el contorno del parche.
-4. Marcas el bloque de texto.
-5. Guardas la muestra maestra.
-6. Inspeccionas producción comparando contra esa muestra.
+Principios:
 
-La tarjeta 7×7 / 5×5 queda como calibración opcional de supervisor para obtener medidas reales en milímetros.
+- Sin dibujar rectángulos.
+- Sin tarjeta 7x7 obligatoria.
+- Fondo liso y contrastante como referencia física.
+- Cámara preferentemente fija.
+- Primero se guarda una muestra buena.
+- La producción se compara contra esa muestra.
+- Si la lectura no es segura, no rechaza la pieza.
+
+Estados principales:
+
+- **OK**: lectura estable y alineada contra la muestra buena.
+- **REVISAR**: lectura confiable, pero fuera de tolerancia contra la muestra.
+- **NO LEE**: ve el parche, pero no confirma el texto.
+- **NO VEO PARCHE**: no puede separar el parche del fondo.
+- **AJUSTAR ESCENA**: hay problemas de luz, movimiento o fondo.
+
+## Flujo de uso
+
+1. Abrir `/captura` en el celular.
+2. Iniciar cámara.
+3. Colocar un parche bueno sobre fondo liso mate.
+4. Esperar que diga **MUESTRA LISTA**.
+5. Tocar **Guardar muestra buena**.
+6. Tocar **Inspeccionar producción**.
+7. Colocar los parches de producción dentro de la guía.
+8. Abrir `/monitor` en PC y conectar con el código de sesión del celular.
+
+## Condiciones recomendadas
+
+- Fondo liso, mate, sin textura fuerte.
+- Color del fondo diferente al parche.
+- Luz pareja y sin reflejos fuertes.
+- Un solo parche visible.
+- Fondo visible alrededor del parche.
+- Celular fijo o lo más estable posible.
 
 ## Rutas
 
-- `/captura`: celular.
-- `/monitor`: PC.
-- `/health`: estado del servicio.
+- `/captura`: vista móvil.
+- `/monitor`: monitor PC.
+- `/health`: prueba de servicio.
 
-## Flujo para operador
-
-1. Abrir `/captura` en el celular.
-2. Tocar **Iniciar cámara**.
-3. Colocar un parche correcto.
-4. Tocar **1 · Marcar parche bueno** y dibujar alrededor de todo el parche.
-5. Tocar **2 · Marcar texto bueno** y dibujar solo sobre las letras.
-6. Tocar **3 · Guardar muestra maestra**.
-7. Tocar **Inspeccionar producción**.
-8. Colocar cada parche dentro de la guía azul.
-
-## Flujo para PC
-
-1. Abrir `/monitor`.
-2. Escribir el código de 3 letras y 3 números que aparece en el celular.
-3. Ver resultado en vivo.
-
-## Despliegue Render
+## Despliegue en Render
 
 Build command:
 
@@ -52,21 +64,12 @@ Start command:
 uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
-## Notas técnicas
+## Arquitectura
 
-- El análisis visual corre en el navegador del celular con OpenCV.js.
-- El backend FastAPI solo retransmite métricas por WebSocket.
-- La imagen no se manda al servidor.
-- La detección del texto se basa en plantilla visual marcada en la muestra buena.
-- El suavizado temporal reduce saltos de lectura.
-- Si la seguridad de lectura es baja, el sistema muestra **NO LEE** o **REVISAR**, no rechaza automáticamente.
+- Frontend móvil: análisis visual en navegador.
+- Backend FastAPI: solo sirve archivos y retransmite telemetría por WebSocket.
+- Monitor PC: recibe datos, no analiza video.
 
-## Recomendación física
+## Importante
 
-Para mejores resultados:
-
-- Celular fijo en soporte.
-- Luz constante y pareja.
-- Prenda siempre en la misma zona.
-- Fondo sin sombras fuertes.
-- Crear una muestra maestra por tipo de parche/texto.
+Esta versión no usa milímetros reales por defecto. Trabaja por comparación relativa contra una muestra buena. Para milímetros reales se puede agregar después un modo supervisor con calibración física.

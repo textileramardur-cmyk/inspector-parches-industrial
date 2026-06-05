@@ -3,148 +3,105 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Captura | Inspector de Parches V6</title>
+  <title>Inspector de Parches · Captura</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
-<body class="page capture-page">
+<body class="app-body capture-body">
   <header class="topbar">
     <div>
-      <p class="eyebrow">Inspector industrial · V6 muestra maestra</p>
-      <h1>Inspección guiada de parche y texto</h1>
+      <h1>Inspector de Parches</h1>
+      <p>Captura móvil · V9 robusta</p>
     </div>
     <div class="session-pill">
-      <span>Código para PC</span>
+      <span>Sesión</span>
       <strong id="sessionCode">---</strong>
     </div>
   </header>
 
-  <main class="layout capture-layout">
-    <section class="video-card">
-      <div class="wizard-strip three" aria-label="Flujo de inspección">
-        <div id="stepCamera" class="wizard-step active"><span>1</span><strong>Cámara</strong><small>Iniciar</small></div>
-        <div id="stepMaster" class="wizard-step"><span>2</span><strong>Muestra</strong><small>Parche bueno</small></div>
-        <div id="stepInspect" class="wizard-step"><span>3</span><strong>Producción</strong><small>Comparar</small></div>
-      </div>
-
-      <div class="operator-instruction" id="operatorInstruction">
-        Toca “Iniciar cámara”. Luego coloca un parche correcto para crear la muestra maestra.
-      </div>
-
-      <div class="video-toolbar">
+  <main class="capture-layout">
+    <section class="camera-card">
+      <div class="status-strip" id="statusStrip">
         <div>
-          <span class="status-dot" id="statusDot"></span>
-          <strong id="mainState">SIN CÁMARA</strong>
+          <span class="eyebrow">Estado</span>
+          <strong id="statusTitle">SIN CÁMARA</strong>
         </div>
-        <span id="opencvState" class="small-muted">Cargando OpenCV.js…</span>
+        <p id="statusMessage">Inicia la cámara para preparar la inspección.</p>
       </div>
 
-      <div class="viewer-wrap">
-        <video id="video" playsinline muted autoplay></video>
-        <canvas id="viewCanvas"></canvas>
-        <div id="cameraHint" class="camera-hint">
-          <strong>Paso 1: inicia la cámara</strong><br />
-          <span>La tarjeta 7×7 ahora es opcional. Primero haremos una muestra buena.</span>
-        </div>
+      <div class="stage-wrap">
+        <video id="video" playsinline muted></video>
+        <canvas id="canvas"></canvas>
+        <div class="guide-label">Coloca un solo parche dentro de la guía</div>
       </div>
 
-      <div class="button-row main-actions">
-        <button id="btnCamera" class="btn primary">Iniciar cámara</button>
-        <button id="btnMarkPatch" class="btn success" disabled>1 · Marcar parche bueno</button>
-        <button id="btnMarkText" class="btn success" disabled>2 · Marcar texto bueno</button>
-        <button id="btnSaveMaster" class="btn primary" disabled>3 · Guardar muestra maestra</button>
-        <button id="btnStartInspect" class="btn secondary" disabled>Inspeccionar producción</button>
-        <button id="btnFreeze" class="btn secondary" disabled>Pausar imagen</button>
+      <div class="primary-actions">
+        <button id="btnStart" class="btn btn-primary">Iniciar cámara</button>
+        <button id="btnSaveMaster" class="btn btn-success" disabled>Guardar muestra buena</button>
+        <button id="btnInspect" class="btn btn-secondary" disabled>Inspeccionar producción</button>
       </div>
 
-      <div class="button-row secondary-actions">
-        <button id="btnNewMaster" class="btn ghost">Nueva muestra</button>
-        <button id="btnClearMaster" class="btn ghost">Borrar muestra guardada</button>
+      <div class="secondary-actions">
+        <button id="btnResetMaster" class="btn btn-ghost">Nueva muestra</button>
+        <button id="btnEvidence" class="btn btn-ghost">Guardar evidencia</button>
+        <button id="btnReconnect" class="btn btn-ghost">Reconectar monitor</button>
       </div>
     </section>
 
-    <aside class="panel-stack">
-      <section class="panel action-panel">
-        <h2>Qué hacer ahora</h2>
-        <p id="nextAction" class="next-action">Inicia la cámara del celular.</p>
-        <div class="friendly-status"><span>Parche bueno:</span><strong id="friendlyPatch">Pendiente</strong></div>
-        <div class="friendly-status"><span>Texto bueno:</span><strong id="friendlyText">Pendiente</strong></div>
-        <div class="friendly-status"><span>Muestra maestra:</span><strong id="friendlyMaster">Pendiente</strong></div>
-        <div class="friendly-status"><span>Medidas reales:</span><strong id="friendlyScale">Opcional</strong></div>
-      </section>
-
-      <section class="panel result-panel">
-        <h2>Resultado para operador</h2>
-        <div class="verdict" id="verdict">ESPERA</div>
-        <div class="score-line"><span>Calidad contra muestra</span><strong id="qualityValue">--%</strong></div>
-        <div class="score-line"><span>Seguridad de lectura</span><strong id="readConfidence">--%</strong></div>
-        <p class="note" id="reasonText">Primero guarda una muestra buena.</p>
-      </section>
-
-      <section class="panel">
-        <h2>Lectura entendible</h2>
-        <div class="metric-grid three">
-          <div class="metric"><span>Izq. / der.</span><strong id="dxValue">--</strong></div>
-          <div class="metric"><span>Arriba / abajo</span><strong id="dyValue">--</strong></div>
-          <div class="metric"><span>Parecido visual</span><strong id="visualMatch">--</strong></div>
+    <aside class="side-panel">
+      <section class="card">
+        <h2>Lectura actual</h2>
+        <div class="metric-grid">
+          <div class="metric"><span>Escena</span><strong id="sceneScore">--</strong></div>
+          <div class="metric"><span>Parche</span><strong id="patchScore">--</strong></div>
+          <div class="metric"><span>Texto</span><strong id="textScore">--</strong></div>
+          <div class="metric"><span>Estabilidad</span><strong id="stableScore">--</strong></div>
         </div>
-        <div class="metric-grid two compact">
-          <div class="metric"><span>Parche guía</span><strong id="patchSize">--</strong></div>
-          <div class="metric"><span>Texto encontrado</span><strong id="textSize">--</strong></div>
+        <div class="readout">
+          <p><span>Lateral</span><strong id="deltaX">--</strong></p>
+          <p><span>Arriba / abajo</span><strong id="deltaY">--</strong></p>
+          <p><span>Diagnóstico</span><strong id="diagnostic">Esperando cámara</strong></p>
         </div>
       </section>
 
-      <section class="panel">
-        <h2>Ajuste para operador</h2>
-        <label class="control-label">Nivel de exigencia</label>
-        <select id="precisionPreset" class="select">
+      <section class="card operator-card">
+        <h2>Flujo de trabajo</h2>
+        <ol class="steps" id="stepsList">
+          <li class="active">Inicia cámara.</li>
+          <li>Coloca un parche bueno sobre fondo liso.</li>
+          <li>Espera que diga “MUESTRA LISTA”.</li>
+          <li>Guarda muestra buena.</li>
+          <li>Inspecciona producción.</li>
+        </ol>
+      </section>
+
+      <details class="card supervisor">
+        <summary>Ajustes de supervisor</summary>
+        <label class="control-label">Exigencia</label>
+        <select id="strictness">
           <option value="normal" selected>Normal · recomendado</option>
-          <option value="strict">Estricto · más fino</option>
-          <option value="loose">Flexible · más tolerante</option>
+          <option value="strict">Estricto · menos tolerancia</option>
+          <option value="flexible">Flexible · más tolerancia</option>
         </select>
-        <p class="note">En producción normal usa “Normal”. Solo cambia esto si calidad lo autoriza.</p>
-      </section>
 
-      <section class="panel supervisor-panel">
-        <details>
-          <summary>Modo supervisor · medidas reales y tolerancias</summary>
+        <label class="control-label">Sensibilidad para separar parche del fondo</label>
+        <input id="segSensitivity" type="range" min="20" max="95" value="48" />
+        <div class="range-row"><span>Ignora sombras</span><span>Más sensible</span></div>
 
-          <div class="subsection-title">Medición real opcional</div>
-          <p class="note">La app puede trabajar sin tarjeta 7×7. Para milímetros reales, usa el tamaño conocido del parche o calibra con la tarjeta.</p>
+        <label class="check-row"><input id="showDebug" type="checkbox" checked /> Mostrar guías y rectángulos</label>
+        <label class="check-row"><input id="holdLast" type="checkbox" checked /> Mantener última lectura estable</label>
 
-          <div class="two-fields">
-            <label>Parche ancho mm
-              <input id="patchRealW" type="number" step="0.1" value="58" />
-            </label>
-            <label>Parche alto mm
-              <input id="patchRealH" type="number" step="0.1" value="54" />
-            </label>
-          </div>
-          <button id="btnUsePatchScale" class="btn secondary wide" disabled>Usar tamaño del parche como escala</button>
-          <button id="btnCalibrateCard" class="btn secondary wide" disabled>Calibrar con tarjeta 7×7 / negro 5×5</button>
-          <div class="scale-readout"><span>Escala actual:</span><strong id="lockedScale">Sin mm</strong></div>
-
-          <div class="subsection-title">Tolerancias avanzadas</div>
-          <label class="control-label">Diferencia lateral permitida <span id="tolXLabel">3.0%</span></label>
-          <input id="tolX" type="range" min="1" max="10" step="0.5" value="3" />
-
-          <label class="control-label">Diferencia vertical permitida <span id="tolYLabel">4.0%</span></label>
-          <input id="tolY" type="range" min="1" max="12" step="0.5" value="4" />
-
-          <label class="control-label">Mínimo para aprobar <span id="scoreMinLabel">85%</span></label>
-          <input id="scoreMin" type="range" min="50" max="100" step="1" value="85" />
-
-          <label class="control-label">Mínimo de seguridad de lectura <span id="confMinLabel">75%</span></label>
-          <input id="confMin" type="range" min="50" max="95" step="1" value="75" />
-        </details>
-      </section>
+        <div class="hint-box">
+          <strong>Regla de piso:</strong> NO LEE no es pieza mala. REVISAR sí requiere criterio humano.
+        </div>
+      </details>
     </aside>
   </main>
 
   <footer class="footer-note">
-    Flujo recomendado: celular fijo → parche bueno → marcar parche → marcar texto → guardar muestra → inspeccionar. La tarjeta 7×7 queda como herramienta opcional de supervisor.
+    Fondo liso mate · parche completo dentro de la guía · sin manos ni objetos alrededor · cámara fija si es posible.
   </footer>
 
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>
-  <script defer src="/static/app.js"></script>
+  <script src="/static/app.js"></script>
 </body>
 </html>

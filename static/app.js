@@ -1,994 +1,787 @@
 (() => {
-  const $ = (id) => document.getElementById(id);
+  'use strict';
 
-  const dom = {
-    video: $("video"),
-    canvas: $("viewCanvas"),
-    hint: $("cameraHint"),
-    sessionCode: $("sessionCode"),
-    btnCamera: $("btnCamera"),
-    btnMarkPatch: $("btnMarkPatch"),
-    btnMarkText: $("btnMarkText"),
-    btnSaveMaster: $("btnSaveMaster"),
-    btnStartInspect: $("btnStartInspect"),
-    btnFreeze: $("btnFreeze"),
-    btnNewMaster: $("btnNewMaster"),
-    btnClearMaster: $("btnClearMaster"),
-    btnUsePatchScale: $("btnUsePatchScale"),
-    btnCalibrateCard: $("btnCalibrateCard"),
-    mainState: $("mainState"),
-    statusDot: $("statusDot"),
-    opencvState: $("opencvState"),
-    operatorInstruction: $("operatorInstruction"),
-    nextAction: $("nextAction"),
-    stepCamera: $("stepCamera"),
-    stepMaster: $("stepMaster"),
-    stepInspect: $("stepInspect"),
-    friendlyPatch: $("friendlyPatch"),
-    friendlyText: $("friendlyText"),
-    friendlyMaster: $("friendlyMaster"),
-    friendlyScale: $("friendlyScale"),
-    verdict: $("verdict"),
-    qualityValue: $("qualityValue"),
-    readConfidence: $("readConfidence"),
-    reasonText: $("reasonText"),
-    dxValue: $("dxValue"),
-    dyValue: $("dyValue"),
-    visualMatch: $("visualMatch"),
-    patchSize: $("patchSize"),
-    textSize: $("textSize"),
-    precisionPreset: $("precisionPreset"),
-    patchRealW: $("patchRealW"),
-    patchRealH: $("patchRealH"),
-    lockedScale: $("lockedScale"),
-    tolX: $("tolX"),
-    tolY: $("tolY"),
-    scoreMin: $("scoreMin"),
-    confMin: $("confMin"),
-    tolXLabel: $("tolXLabel"),
-    tolYLabel: $("tolYLabel"),
-    scoreMinLabel: $("scoreMinLabel"),
-    confMinLabel: $("confMinLabel"),
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    video: $('video'), canvas: $('canvas'), sessionCode: $('sessionCode'), statusStrip: $('statusStrip'),
+    statusTitle: $('statusTitle'), statusMessage: $('statusMessage'), btnStart: $('btnStart'), btnSaveMaster: $('btnSaveMaster'),
+    btnInspect: $('btnInspect'), btnResetMaster: $('btnResetMaster'), btnEvidence: $('btnEvidence'), btnReconnect: $('btnReconnect'),
+    sceneScore: $('sceneScore'), patchScore: $('patchScore'), textScore: $('textScore'), stableScore: $('stableScore'),
+    deltaX: $('deltaX'), deltaY: $('deltaY'), diagnostic: $('diagnostic'), stepsList: $('stepsList'), strictness: $('strictness'),
+    segSensitivity: $('segSensitivity'), showDebug: $('showDebug'), holdLast: $('holdLast')
   };
 
-  const ctx = dom.canvas.getContext("2d", { alpha: false });
+  const ctx = els.canvas.getContext('2d', { willReadFrequently: true });
+  const STORAGE_KEY = 'inspector_v9_master_sample';
+  const SESSION_KEY = 'inspector_v9_session_code';
 
   const state = {
-    version: "6.0.0",
-    session: getOrCreateSessionCode(),
-    cvReady: false,
-    cameraRunning: false,
-    frozen: false,
-    flow: "camera", // camera | master | inspect
+    cameraReady: false,
+    running: false,
+    mode: 'SETUP', // SETUP | SAMPLE_READY | MASTER_SAVED | INSPECT
+    session: getSessionCode(),
     ws: null,
-    wsConnected: false,
-    frameCounter: 0,
-    lastSentAt: 0,
-    rawCanvas: document.createElement("canvas"),
-    rawCtx: null,
-    markingMode: null, // patch | text | null
-    markStart: null,
-    markCurrent: null,
-    patchCandidate: null,
-    textCandidate: null,
-    master: null,
-    template: null,
-    lastInspection: null,
-    smoothInspection: null,
-    lastGoodInspectionAt: 0,
-    pxPerMm: null,
-    scaleSource: "Sin mm",
+    lastProcess: 0,
+    frameMs: 95,
+    prevThumb: null,
+    history: [],
+    telemetryLast: 0,
+    lastReading: null,
+    stableReading: null,
+    master: loadMaster(),
+    lastCanvasDataUrl: null
   };
 
-  state.rawCtx = state.rawCanvas.getContext("2d", { alpha: false });
-  dom.sessionCode.textContent = state.session;
-
-  setupControls();
-  setupPointerMarking();
-  loadMasterFromStorage();
-  waitForOpenCv();
-  connectWebSocket();
-  updateUi();
-
-  function getOrCreateSessionCode() {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-    let code = "";
-    for (let i = 0; i < 3; i++) code += chars[Math.floor(Math.random() * chars.length)];
-    return code + String(Math.floor(100 + Math.random() * 900));
+  els.sessionCode.textContent = state.session;
+  if (state.master) {
+    state.mode = 'MASTER_SAVED';
+    els.btnInspect.disabled = false;
+    setStatus('MUESTRA GUARDADA', 'Hay una muestra activa. Puedes inspeccionar o crear una nueva muestra.', 'state-confirm');
   }
 
-  function setupControls() {
-    dom.btnCamera.addEventListener("click", startCamera);
-    dom.btnMarkPatch.addEventListener("click", () => startMarking("patch"));
-    dom.btnMarkText.addEventListener("click", () => startMarking("text"));
-    dom.btnSaveMaster.addEventListener("click", saveMaster);
-    dom.btnStartInspect.addEventListener("click", startInspect);
-    dom.btnFreeze.addEventListener("click", toggleFreeze);
-    dom.btnNewMaster.addEventListener("click", newMaster);
-    dom.btnClearMaster.addEventListener("click", clearMaster);
-    dom.btnUsePatchScale.addEventListener("click", usePatchAsScale);
-    dom.btnCalibrateCard.addEventListener("click", calibrateWithCard);
-    dom.precisionPreset.addEventListener("change", applyPreset);
-    [dom.tolX, dom.tolY, dom.scoreMin, dom.confMin].forEach((el) => el.addEventListener("input", updateToleranceLabels));
-    applyPreset();
+  els.btnStart.addEventListener('click', startCamera);
+  els.btnSaveMaster.addEventListener('click', saveMasterFromCurrent);
+  els.btnInspect.addEventListener('click', () => {
+    if (!state.master) return setStatus('SIN MUESTRA', 'Primero guarda una muestra buena.', 'state-adjust');
+    state.mode = 'INSPECT';
+    updateSteps(4);
+    setStatus('INSPECCIONANDO', 'Coloca cada parche dentro de la guía. El sistema esperará lectura estable.', 'state-confirm');
+  });
+  els.btnResetMaster.addEventListener('click', () => {
+    localStorage.removeItem(STORAGE_KEY);
+    state.master = null;
+    state.mode = 'SETUP';
+    state.history = [];
+    state.stableReading = null;
+    els.btnInspect.disabled = true;
+    els.btnSaveMaster.disabled = true;
+    updateSteps(1);
+    setStatus('NUEVA MUESTRA', 'Coloca un parche bueno para crear una referencia nueva.', 'state-confirm');
+  });
+  els.btnEvidence.addEventListener('click', saveEvidence);
+  els.btnReconnect.addEventListener('click', connectWs);
+  els.strictness.addEventListener('change', () => state.history = []);
+  els.segSensitivity.addEventListener('input', () => state.history = []);
+
+  connectWs();
+
+  function getSessionCode() {
+    let code = localStorage.getItem(SESSION_KEY);
+    if (!code) {
+      const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+      const nums = '23456789';
+      code = Array.from({ length: 3 }, () => letters[Math.floor(Math.random() * letters.length)]).join('') +
+        Array.from({ length: 3 }, () => nums[Math.floor(Math.random() * nums.length)]).join('');
+      localStorage.setItem(SESSION_KEY, code);
+    }
+    return code.toUpperCase();
   }
 
-  function applyPreset() {
-    const preset = dom.precisionPreset.value;
-    const values = {
-      strict: { x: 2, y: 2.5, s: 90, c: 82 },
-      normal: { x: 3, y: 4, s: 85, c: 75 },
-      loose: { x: 5, y: 6, s: 75, c: 65 },
-    }[preset] || { x: 3, y: 4, s: 85, c: 75 };
-    dom.tolX.value = values.x;
-    dom.tolY.value = values.y;
-    dom.scoreMin.value = values.s;
-    dom.confMin.value = values.c;
-    updateToleranceLabels();
-  }
-
-  function updateToleranceLabels() {
-    dom.tolXLabel.textContent = `${Number(dom.tolX.value).toFixed(1)}%`;
-    dom.tolYLabel.textContent = `${Number(dom.tolY.value).toFixed(1)}%`;
-    dom.scoreMinLabel.textContent = `${Number(dom.scoreMin.value).toFixed(0)}%`;
-    dom.confMinLabel.textContent = `${Number(dom.confMin.value).toFixed(0)}%`;
-  }
-
-  function tolerances() {
-    return {
-      xPct: Number(dom.tolX.value),
-      yPct: Number(dom.tolY.value),
-      scoreMin: Number(dom.scoreMin.value),
-      confMin: Number(dom.confMin.value),
-    };
-  }
-
-  function waitForOpenCv() {
-    const start = Date.now();
-    const timer = setInterval(() => {
-      if (window.cv && cv.Mat && cv.imread && cv.matchTemplate) {
-        clearInterval(timer);
-        state.cvReady = true;
-        dom.opencvState.textContent = "OpenCV.js listo";
-        if (state.master && !state.template) rebuildTemplateFromMaster();
-        updateUi();
-      } else if (Date.now() - start > 25000) {
-        clearInterval(timer);
-        dom.opencvState.textContent = "OpenCV.js no cargó. Recarga la página con buena conexión.";
-      }
-    }, 250);
+  function loadMaster() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch { return null; }
   }
 
   async function startCamera() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
         video: {
-          facingMode: { ideal: "environment" },
+          facingMode: { ideal: 'environment' },
           width: { ideal: 1280 },
-          height: { ideal: 720 },
+          height: { ideal: 720 }
         },
+        audio: false
       });
-      dom.video.srcObject = stream;
-      await dom.video.play();
-      resizeCanvas();
-      state.cameraRunning = true;
-      state.frozen = false;
-      state.flow = state.master ? "inspect" : "master";
-      dom.hint.style.display = "none";
-      dom.btnCamera.textContent = "Cámara activa";
-      dom.btnCamera.disabled = true;
-      dom.btnFreeze.disabled = false;
-      setMainState(state.master ? "INSPECCIONANDO" : "CREA MUESTRA", state.master ? "ok" : "warn");
-      updateUi();
-      loop();
+      els.video.srcObject = stream;
+      await els.video.play();
+      state.cameraReady = true;
+      state.running = true;
+      els.btnStart.textContent = 'Cámara activa';
+      els.btnStart.disabled = true;
+      setStatus('LISTO', state.master ? 'Muestra activa. Coloca un parche para inspeccionar.' : 'Coloca un parche bueno para guardar muestra.', 'state-confirm');
+      requestAnimationFrame(loop);
     } catch (err) {
       console.error(err);
-      setMainState("ERROR DE CÁMARA", "bad");
-      dom.opencvState.textContent = "No se pudo abrir la cámara. Revisa permisos del navegador.";
+      setStatus('ERROR DE CÁMARA', 'No pude abrir la cámara. Revisa permisos del navegador.', 'state-error');
     }
   }
 
-  function resizeCanvas() {
-    const vw = dom.video.videoWidth || 1280;
-    const vh = dom.video.videoHeight || 720;
-    dom.canvas.width = vw;
-    dom.canvas.height = vh;
-    state.rawCanvas.width = vw;
-    state.rawCanvas.height = vh;
+  function connectWs() {
+    try { if (state.ws) state.ws.close(); } catch {}
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const url = `${proto}://${location.host}/ws/capture/${state.session}`;
+    const ws = new WebSocket(url);
+    state.ws = ws;
+    ws.onopen = () => sendTelemetry({ type: 'system', status: 'CAPTURA CONECTADA', session: state.session }, true);
+    ws.onclose = () => setTimeout(() => { if (state.ws === ws) connectWs(); }, 2500);
   }
 
-  function loop() {
-    if (!state.cameraRunning) return;
-    if (!state.frozen) {
-      state.rawCtx.drawImage(dom.video, 0, 0, state.rawCanvas.width, state.rawCanvas.height);
-    }
-    drawBaseFrame();
-
-    if (state.flow === "inspect" && state.master && state.template && state.cvReady && !state.markingMode) {
-      // Baja frecuencia = menos brincos. La pantalla sigue fluida, la medición no se vuelve epilepsia corporativa.
-      if (state.frameCounter % 5 === 0) {
-        const inspection = inspectCurrentFrame();
-        if (inspection) {
-          state.lastInspection = inspection;
-          state.smoothInspection = smoothInspection(state.smoothInspection, inspection);
-          state.lastGoodInspectionAt = Date.now();
-        }
+  function loop(ts) {
+    if (!state.running) return;
+    drawVideoFrame();
+    if (ts - state.lastProcess >= state.frameMs) {
+      state.lastProcess = ts;
+      try {
+        const reading = analyzeFrame(ts);
+        state.lastReading = reading;
+        updateHistory(reading);
+        const decision = decide(reading);
+        drawOverlay(reading, decision);
+        updateUI(reading, decision);
+        maybeSendTelemetry(reading, decision, ts);
+      } catch (err) {
+        console.error(err);
+        setStatus('ERROR DE LECTURA', 'Algo falló durante el análisis. Reinicia cámara si se repite.', 'state-error');
       }
     }
-
-    drawOverlay();
-    renderMeasurements();
-    publishTelemetryThrottled();
-
-    state.frameCounter += 1;
     requestAnimationFrame(loop);
   }
 
-  function drawBaseFrame() {
-    ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
-    ctx.drawImage(state.rawCanvas, 0, 0);
+  function drawVideoFrame() {
+    const vw = els.video.videoWidth || 1280;
+    const vh = els.video.videoHeight || 720;
+    if (els.canvas.width !== vw || els.canvas.height !== vh) {
+      els.canvas.width = vw;
+      els.canvas.height = vh;
+    }
+    ctx.drawImage(els.video, 0, 0, els.canvas.width, els.canvas.height);
   }
 
-  function setupPointerMarking() {
-    dom.canvas.addEventListener("pointerdown", (ev) => {
-      if (!state.markingMode) return;
-      ev.preventDefault();
-      dom.canvas.setPointerCapture(ev.pointerId);
-      const p = eventToCanvasPoint(ev);
-      state.markStart = p;
-      state.markCurrent = p;
-    });
-    dom.canvas.addEventListener("pointermove", (ev) => {
-      if (!state.markingMode || !state.markStart) return;
-      ev.preventDefault();
-      state.markCurrent = eventToCanvasPoint(ev);
-    });
-    dom.canvas.addEventListener("pointerup", (ev) => {
-      if (!state.markingMode || !state.markStart) return;
-      ev.preventDefault();
-      const end = eventToCanvasPoint(ev);
-      const rect = normalizeRect({ x: state.markStart.x, y: state.markStart.y, w: end.x - state.markStart.x, h: end.y - state.markStart.y });
-      if (rect.w > 20 && rect.h > 10) {
-        if (state.markingMode === "patch") {
-          state.patchCandidate = rect;
-          setMainState("PARCHE MARCADO", "ok");
-          state.flow = "master";
-        } else if (state.markingMode === "text") {
-          state.textCandidate = rect;
-          setMainState("TEXTO MARCADO", "ok");
-          state.flow = "master";
+  function analyzeFrame(ts) {
+    const w = els.canvas.width;
+    const h = els.canvas.height;
+    const image = ctx.getImageData(0, 0, w, h);
+    const guide = getGuideRect(w, h);
+    const bg = sampleBackground(image, w, h);
+    const motion = estimateMotion(image, w, h, guide);
+    const scene = scoreScene(bg, motion);
+    const patchResult = detectPatch(image, w, h, guide, bg, scene);
+    let textResult = null;
+    let compare = null;
+    if (patchResult) {
+      textResult = detectText(image, w, h, patchResult.rect, state.master);
+      if (textResult && state.master) compare = compareToMaster(textResult.rect, patchResult.rect, state.master);
+    }
+    return {
+      ts,
+      mode: state.mode,
+      guide,
+      bg,
+      motion,
+      sceneScore: scene.score,
+      sceneReasons: scene.reasons,
+      patch: patchResult,
+      text: textResult,
+      compare,
+      master: state.master ? state.master : null
+    };
+  }
+
+  function getGuideRect(w, h) {
+    const gw = w * 0.72;
+    const gh = h * 0.68;
+    return { x: (w - gw) / 2, y: (h - gh) / 2, w: gw, h: gh };
+  }
+
+  function sampleBackground(img, w, h) {
+    const d = img.data;
+    const size = Math.max(18, Math.floor(Math.min(w, h) * 0.08));
+    const corners = [
+      [0, 0], [w - size, 0], [0, h - size], [w - size, h - size]
+    ];
+    let rs = 0, gs = 0, bs = 0, n = 0;
+    const lums = [];
+    for (const [sx, sy] of corners) {
+      for (let y = sy; y < sy + size; y += 4) {
+        for (let x = sx; x < sx + size; x += 4) {
+          const i = (y * w + x) * 4;
+          const r = d[i], g = d[i + 1], b = d[i + 2];
+          rs += r; gs += g; bs += b; n++;
+          lums.push(luma(r, g, b));
         }
       }
-      state.markingMode = null;
-      state.markStart = null;
-      state.markCurrent = null;
-      document.body.classList.remove("marking");
-      updateUi();
-    });
-  }
-
-  function eventToCanvasPoint(ev) {
-    const r = dom.canvas.getBoundingClientRect();
-    return {
-      x: clamp((ev.clientX - r.left) * (dom.canvas.width / r.width), 0, dom.canvas.width),
-      y: clamp((ev.clientY - r.top) * (dom.canvas.height / r.height), 0, dom.canvas.height),
-    };
-  }
-
-  function startMarking(mode) {
-    if (!state.cameraRunning) return;
-    state.markingMode = mode;
-    state.markStart = null;
-    state.markCurrent = null;
-    document.body.classList.add("marking");
-    setMainState(mode === "patch" ? "DIBUJA EL PARCHE" : "DIBUJA EL TEXTO", "warn");
-    dom.operatorInstruction.textContent = mode === "patch"
-      ? "Con el dedo, arrastra un rectángulo alrededor de TODO el parche bueno."
-      : "Con el dedo, arrastra un rectángulo SOLO sobre las letras. No incluyas borde ni sombras.";
-    dom.nextAction.textContent = dom.operatorInstruction.textContent;
-  }
-
-  function saveMaster() {
-    if (!state.patchCandidate || !state.textCandidate) {
-      setMainState("FALTA MARCAR", "bad");
-      dom.reasonText.textContent = "Primero marca el parche bueno y luego el texto bueno.";
-      return;
     }
-    if (!rectInside(state.textCandidate, state.patchCandidate)) {
-      setMainState("TEXTO FUERA", "bad");
-      dom.reasonText.textContent = "El texto debe quedar dentro del rectángulo del parche.";
-      return;
+    const r = rs / n, g = gs / n, b = bs / n;
+    const meanLum = lums.reduce((a, v) => a + v, 0) / lums.length;
+    const variance = lums.reduce((a, v) => a + Math.pow(v - meanLum, 2), 0) / lums.length;
+    return { r, g, b, lum: luma(r, g, b), variance: Math.sqrt(variance), chroma: chroma(r, g, b) };
+  }
+
+  function estimateMotion(img, w, h, guide) {
+    const d = img.data;
+    const step = Math.max(12, Math.floor(Math.min(w, h) / 48));
+    const vals = [];
+    for (let y = Math.floor(guide.y); y < guide.y + guide.h; y += step) {
+      for (let x = Math.floor(guide.x); x < guide.x + guide.w; x += step) {
+        const i = (y * w + x) * 4;
+        vals.push(luma(d[i], d[i + 1], d[i + 2]));
+      }
     }
-
-    const patchPct = rectToPct(state.patchCandidate);
-    const textPct = rectToPct(state.textCandidate);
-    const templateDataUrl = cropToDataUrl(state.textCandidate);
-
-    state.master = {
-      patchPct,
-      textPct,
-      templateDataUrl,
-      createdAt: new Date().toISOString(),
-      width: dom.canvas.width,
-      height: dom.canvas.height,
-      pxPerMm: state.pxPerMm,
-      scaleSource: state.scaleSource,
-    };
-    rebuildTemplateFromMaster();
-    saveMasterToStorage();
-    state.flow = "inspect";
-    state.lastInspection = null;
-    state.smoothInspection = null;
-    setMainState("MUESTRA GUARDADA", "ok");
-    updateUi();
-  }
-
-  function startInspect() {
-    if (!state.master) return;
-    state.flow = "inspect";
-    state.markingMode = null;
-    state.smoothInspection = null;
-    setMainState("INSPECCIONANDO", "ok");
-    updateUi();
-  }
-
-  function toggleFreeze() {
-    state.frozen = !state.frozen;
-    dom.btnFreeze.textContent = state.frozen ? "Reanudar imagen" : "Pausar imagen";
-    setMainState(state.frozen ? "IMAGEN PAUSADA" : (state.master ? "INSPECCIONANDO" : "CREA MUESTRA"), state.frozen ? "warn" : "ok");
-  }
-
-  function newMaster() {
-    state.flow = state.cameraRunning ? "master" : "camera";
-    state.patchCandidate = null;
-    state.textCandidate = null;
-    state.master = null;
-    state.template = null;
-    state.lastInspection = null;
-    state.smoothInspection = null;
-    localStorage.removeItem("inspector_v6_master");
-    setMainState(state.cameraRunning ? "CREA MUESTRA" : "SIN CÁMARA", state.cameraRunning ? "warn" : "unstable");
-    updateUi();
-  }
-
-  function clearMaster() {
-    newMaster();
-    localStorage.removeItem("inspector_v6_master");
-    localStorage.removeItem("inspector_v6_scale");
-    state.pxPerMm = null;
-    state.scaleSource = "Sin mm";
-    updateUi();
-  }
-
-  function usePatchAsScale() {
-    const patch = state.master ? pctToRect(state.master.patchPct) : state.patchCandidate;
-    if (!patch) return;
-    const realW = Number(dom.patchRealW.value);
-    const realH = Number(dom.patchRealH.value);
-    if (realW <= 0 || realH <= 0) return;
-    state.pxPerMm = ((patch.w / realW) + (patch.h / realH)) / 2;
-    state.scaleSource = `Parche ${realW.toFixed(1)}×${realH.toFixed(1)} mm`;
-    saveScaleToStorage();
-    if (state.master) {
-      state.master.pxPerMm = state.pxPerMm;
-      state.master.scaleSource = state.scaleSource;
-      saveMasterToStorage();
+    let diff = 0;
+    if (state.prevThumb && state.prevThumb.length === vals.length) {
+      for (let i = 0; i < vals.length; i++) diff += Math.abs(vals[i] - state.prevThumb[i]);
+      diff /= vals.length;
     }
-    setMainState("ESCALA GUARDADA", "ok");
-    updateUi();
+    state.prevThumb = vals;
+    return diff;
   }
 
-  function calibrateWithCard() {
-    if (!state.cvReady || !state.cameraRunning) return;
-    const sidePx = detectBlackCardSidePx();
-    if (!sidePx) {
-      setMainState("NO LEE TARJETA", "bad");
-      dom.reasonText.textContent = "No se encontró claramente el cuadro negro 5×5. Usa papel mate, más contraste o calibra con tamaño del parche.";
-      return;
+  function scoreScene(bg, motion) {
+    let score = 100;
+    const reasons = [];
+    if (bg.variance > 18) { score -= 22; reasons.push('fondo irregular'); }
+    if (bg.variance > 28) { score -= 18; reasons.push('fondo con sombras/manchas'); }
+    if (motion > 12) { score -= 18; reasons.push('movimiento'); }
+    if (motion > 22) { score -= 25; reasons.push('mucho movimiento'); }
+    score = clamp(score, 0, 100);
+    return { score, reasons };
+  }
+
+  function detectPatch(img, w, h, guide, bg, scene) {
+    const d = img.data;
+    const sens = Number(els.segSensitivity.value); // 20 to 95. Higher means more sensitive.
+    const threshold = 112 - sens; // normal 64
+    const mask = new Uint8Array(w * h);
+    const gx1 = Math.max(0, Math.floor(guide.x - guide.w * 0.08));
+    const gy1 = Math.max(0, Math.floor(guide.y - guide.h * 0.08));
+    const gx2 = Math.min(w, Math.ceil(guide.x + guide.w * 1.08));
+    const gy2 = Math.min(h, Math.ceil(guide.y + guide.h * 1.08));
+
+    for (let y = gy1; y < gy2; y++) {
+      for (let x = gx1; x < gx2; x++) {
+        const i = (y * w + x) * 4;
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        const lumDiff = Math.abs(luma(r, g, b) - bg.lum);
+        const chromaDiff = Math.abs(chroma(r, g, b) - bg.chroma);
+        const colorDistance = colorDist(r, g, b, bg.r, bg.g, bg.b);
+        const looksObject = (colorDistance > threshold && (chromaDiff > threshold * 0.32 || lumDiff > threshold * 0.72)) || chromaDiff > threshold * 0.72;
+        if (looksObject) mask[y * w + x] = 1;
+      }
     }
-    state.pxPerMm = sidePx / 50;
-    state.scaleSource = "Tarjeta 7×7 / negro 5×5";
-    saveScaleToStorage();
-    setMainState("TARJETA CALIBRADA", "ok");
-    updateUi();
-  }
+    morph(mask, w, h, gx1, gy1, gx2, gy2, 2);
+    const comps = components(mask, w, h, gx1, gy1, gx2, gy2, 28);
+    if (!comps.length) return null;
 
-  function inspectCurrentFrame() {
-    if (!state.master || !state.template || !state.cvReady) return null;
-    const patchRect = pctToRect(state.master.patchPct);
-    const expectedText = pctToRect(state.master.textPct);
-    const marginX = patchRect.w * 0.20;
-    const marginY = patchRect.h * 0.26;
-    const search = clipRect({
-      x: expectedText.x - marginX,
-      y: expectedText.y - marginY,
-      w: expectedText.w + marginX * 2,
-      h: expectedText.h + marginY * 2,
-    }, patchRect);
-
-    const match = matchTextTemplate(search);
-    if (!match) {
-      return buildInspection({
-        patchRect,
-        expectedText,
-        foundText: null,
-        rawConfidence: 0,
-        visualMatch: 0,
-        reason: "No pude encontrar el texto con seguridad. Revisa luz, enfoque o vuelve a marcar la muestra.",
-      });
-    }
-
-    const foundText = {
-      x: search.x + match.x,
-      y: search.y + match.y,
-      w: state.template.w,
-      h: state.template.h,
-    };
-    const visualMatch = clamp(match.score * 100, 0, 100);
-    return buildInspection({
-      patchRect,
-      expectedText,
-      foundText,
-      rawConfidence: visualMatch,
-      visualMatch,
-      reason: "Lectura comparada contra la muestra maestra.",
-    });
-  }
-
-  function buildInspection({ patchRect, expectedText, foundText, rawConfidence, visualMatch, reason }) {
-    const t = tolerances();
-    let dxPx = 0;
-    let dyPx = 0;
-    let dxPct = 0;
-    let dyPct = 0;
-    let quality = 0;
-    let verdict = "NO LEE";
-    let verdictClass = "warn";
-    let finalReason = reason;
-
-    if (foundText) {
-      const expectedCx = expectedText.x + expectedText.w / 2;
-      const expectedCy = expectedText.y + expectedText.h / 2;
-      const foundCx = foundText.x + foundText.w / 2;
-      const foundCy = foundText.y + foundText.h / 2;
-      dxPx = foundCx - expectedCx;
-      dyPx = foundCy - expectedCy;
-      dxPct = (dxPx / patchRect.w) * 100;
-      dyPct = (dyPx / patchRect.h) * 100;
-      const xScore = scoreDistance(Math.abs(dxPct), t.xPct);
-      const yScore = scoreDistance(Math.abs(dyPct), t.yPct);
-      const visualScore = clamp((visualMatch - 45) / 55 * 100, 0, 100);
-      quality = clamp(xScore * 0.42 + yScore * 0.42 + visualScore * 0.16, 0, 100);
-
-      if (visualMatch < t.confMin) {
-        verdict = visualMatch < 55 ? "NO LEE" : "REVISAR";
-        verdictClass = "warn";
-        finalReason = "El texto no se encontró con suficiente seguridad. No rechaces la pieza solo con esta lectura.";
-      } else if (quality >= t.scoreMin) {
-        verdict = "OK";
-        verdictClass = "ok";
-        finalReason = "El texto coincide con la muestra buena dentro de la tolerancia.";
+    const guideCenter = { x: guide.x + guide.w / 2, y: guide.y + guide.h / 2 };
+    let best = null;
+    let extraArea = 0;
+    for (const c of comps) {
+      const rw = c.x2 - c.x1 + 1, rh = c.y2 - c.y1 + 1;
+      const areaRatio = c.area / (w * h);
+      const aspect = rw / Math.max(1, rh);
+      const fill = c.area / Math.max(1, rw * rh);
+      const cx = c.x1 + rw / 2, cy = c.y1 + rh / 2;
+      const centerPenalty = dist(cx, cy, guideCenter.x, guideCenter.y) / Math.max(guide.w, guide.h);
+      const borderTouch = c.x1 < 4 || c.y1 < 4 || c.x2 > w - 5 || c.y2 > h - 5;
+      const guideOverlap = rectOverlapRatio({ x: c.x1, y: c.y1, w: rw, h: rh }, guide);
+      let score = 0;
+      if (areaRatio > 0.015 && areaRatio < 0.55 && aspect > 0.35 && aspect < 3.0 && !borderTouch) {
+        score = 40 + Math.min(30, areaRatio * 280) + Math.max(0, 20 - centerPenalty * 30) + Math.min(12, fill * 30) + guideOverlap * 18;
       } else {
-        verdict = "MAL";
-        verdictClass = "bad";
-        finalReason = "El texto se aleja de la posición guardada en la muestra buena.";
+        extraArea += c.area;
       }
+      if (!best || score > best.score) best = { comp: c, score, areaRatio, aspect, fill, centerPenalty, guideOverlap };
     }
-
-    return {
-      ts: Date.now(),
-      patchRect,
-      expectedText,
-      foundText,
-      dxPx,
-      dyPx,
-      dxPct,
-      dyPct,
-      dxHuman: movementText(dxPx, dxPct, patchRect.w, "x"),
-      dyHuman: movementText(dyPx, dyPct, patchRect.h, "y"),
-      quality,
-      readConfidence: visualMatch,
-      visualMatch,
-      verdict,
-      verdictClass,
-      reason: finalReason,
-      scale: state.pxPerMm,
-      scaleSource: state.scaleSource,
-    };
+    if (!best || best.score < 42) return null;
+    const c = best.comp;
+    const rect = { x: c.x1, y: c.y1, w: c.x2 - c.x1 + 1, h: c.y2 - c.y1 + 1 };
+    const confidence = clamp(best.score - (extraArea > c.area * 0.25 ? 10 : 0) - (scene.score < 65 ? 8 : 0), 0, 100);
+    return { rect, confidence, maskArea: c.area, aspect: best.aspect, fill: best.fill };
   }
 
-  function scoreDistance(valuePct, tolerancePct) {
-    if (valuePct <= tolerancePct) return 100;
-    if (valuePct >= tolerancePct * 3) return 0;
-    return clamp(100 - ((valuePct - tolerancePct) / (tolerancePct * 2)) * 100, 0, 100);
-  }
-
-  function movementText(deltaPx, deltaPct, patchPx, axis) {
-    const absPct = Math.abs(deltaPct);
-    let amount;
-    if (state.pxPerMm) {
-      amount = `${Math.abs(deltaPx / state.pxPerMm).toFixed(1)} mm`;
+  function detectText(img, w, h, patchRect, master) {
+    const d = img.data;
+    const padX = patchRect.w * 0.06, padY = patchRect.h * 0.08;
+    let search;
+    let expectedRect = null;
+    if (master && master.textNorm) {
+      expectedRect = normToRect(master.textNorm, patchRect);
+      const expandX = Math.max(patchRect.w * 0.18, expectedRect.w * 0.85);
+      const expandY = Math.max(patchRect.h * 0.16, expectedRect.h * 1.25);
+      search = {
+        x: expectedRect.x - expandX,
+        y: expectedRect.y - expandY,
+        w: expectedRect.w + expandX * 2,
+        h: expectedRect.h + expandY * 2
+      };
     } else {
-      amount = `${absPct.toFixed(1)}%`;
+      search = {
+        x: patchRect.x + padX,
+        y: patchRect.y + padY,
+        w: patchRect.w - padX * 2,
+        h: patchRect.h - padY * 2
+      };
     }
-    if (absPct < 0.45) return "Centrado";
-    if (axis === "x") return `${amount} ${deltaPx > 0 ? "derecha" : "izquierda"}`;
-    return `${amount} ${deltaPx > 0 ? "abajo" : "arriba"}`;
-  }
+    search = clampRect(search, patchRect, w, h);
+    if (search.w < 20 || search.h < 12) return null;
 
-  function smoothInspection(prev, cur) {
-    if (!prev) return cur;
-    const alpha = 0.26;
-    if (!cur.foundText || !prev.foundText) return cur;
-    const smoothRect = (a, b) => ({
-      x: lerp(a.x, b.x, alpha),
-      y: lerp(a.y, b.y, alpha),
-      w: lerp(a.w, b.w, alpha),
-      h: lerp(a.h, b.h, alpha),
-    });
-    const mixed = { ...cur };
-    mixed.foundText = smoothRect(prev.foundText, cur.foundText);
-    mixed.dxPx = lerp(prev.dxPx, cur.dxPx, alpha);
-    mixed.dyPx = lerp(prev.dyPx, cur.dyPx, alpha);
-    mixed.dxPct = lerp(prev.dxPct, cur.dxPct, alpha);
-    mixed.dyPct = lerp(prev.dyPct, cur.dyPct, alpha);
-    mixed.quality = lerp(prev.quality, cur.quality, alpha);
-    mixed.readConfidence = lerp(prev.readConfidence, cur.readConfidence, alpha);
-    mixed.visualMatch = lerp(prev.visualMatch, cur.visualMatch, alpha);
-    mixed.dxHuman = movementText(mixed.dxPx, mixed.dxPct, mixed.patchRect.w, "x");
-    mixed.dyHuman = movementText(mixed.dyPx, mixed.dyPct, mixed.patchRect.h, "y");
-    return mixed;
-  }
+    const stats = regionStats(img, w, search);
+    const sw = Math.floor(search.w), sh = Math.floor(search.h);
+    const rawMask = new Uint8Array(sw * sh);
+    const gray = new Float32Array(sw * sh);
 
-  function matchTextTemplate(searchRect) {
-    let src = null;
-    let gray = null;
-    let eq = null;
-    let edge = null;
-    let resultGray = null;
-    let resultEdge = null;
-    try {
-      src = cv.imread(state.rawCanvas);
-      const sr = safeCvRect(searchRect, src.cols, src.rows);
-      if (sr.width <= state.template.w || sr.height <= state.template.h) return null;
-      const roi = src.roi(sr);
-      gray = new cv.Mat();
-      cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
-      roi.delete();
-      eq = new cv.Mat();
-      cv.equalizeHist(gray, eq);
-      edge = new cv.Mat();
-      cv.Canny(eq, edge, 40, 130);
-
-      resultGray = new cv.Mat();
-      resultEdge = new cv.Mat();
-      cv.matchTemplate(eq, state.template.gray, resultGray, cv.TM_CCOEFF_NORMED);
-      cv.matchTemplate(edge, state.template.edge, resultEdge, cv.TM_CCOEFF_NORMED);
-      const mmGray = cv.minMaxLoc(resultGray);
-      const mmEdge = cv.minMaxLoc(resultEdge);
-      const useEdge = mmEdge.maxVal > mmGray.maxVal + 0.04;
-      const loc = useEdge ? mmEdge.maxLoc : mmGray.maxLoc;
-      const rawScore = useEdge ? mmEdge.maxVal : mmGray.maxVal;
-      const blendedScore = clamp((Math.max(mmGray.maxVal, mmEdge.maxVal) * 0.75 + Math.min(mmGray.maxVal, mmEdge.maxVal) * 0.25), 0, 1);
-      return { x: loc.x, y: loc.y, score: Math.max(rawScore, blendedScore) };
-    } catch (err) {
-      console.warn("matchTextTemplate", err);
-      return null;
-    } finally {
-      [src, gray, eq, edge, resultGray, resultEdge].forEach((m) => { if (m) m.delete(); });
-    }
-  }
-
-  function rebuildTemplateFromMaster() {
-    if (!state.master || !state.cvReady) return;
-    if (state.template) {
-      if (state.template.gray) state.template.gray.delete();
-      if (state.template.edge) state.template.edge.delete();
-      state.template = null;
-    }
-    const img = new Image();
-    img.onload = () => {
-      const c = document.createElement("canvas");
-      c.width = img.width;
-      c.height = img.height;
-      const cctx = c.getContext("2d");
-      cctx.drawImage(img, 0, 0);
-      let src = null;
-      let gray = null;
-      let eq = null;
-      let edge = null;
-      try {
-        src = cv.imread(c);
-        gray = new cv.Mat();
-        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-        eq = new cv.Mat();
-        cv.equalizeHist(gray, eq);
-        edge = new cv.Mat();
-        cv.Canny(eq, edge, 40, 130);
-        state.template = { gray: eq.clone(), edge: edge.clone(), w: c.width, h: c.height };
-        updateUi();
-      } catch (err) {
-        console.warn("template", err);
-      } finally {
-        [src, gray, eq, edge].forEach((m) => { if (m) m.delete(); });
+    for (let yy = 0; yy < sh; yy++) {
+      const y = Math.floor(search.y + yy);
+      for (let xx = 0; xx < sw; xx++) {
+        const x = Math.floor(search.x + xx);
+        const i = (y * w + x) * 4;
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        const lum = luma(r, g, b);
+        const cd = colorDist(r, g, b, stats.r, stats.g, stats.b);
+        gray[yy * sw + xx] = lum;
+        const lumAway = Math.abs(lum - stats.lum);
+        // Multiple weak signals are better than a single dramatic threshold.
+        if (cd > 28 || lumAway > 24) rawMask[yy * sw + xx] = 1;
       }
+    }
+
+    // Add gradient edges. This helps embroidery relief without swallowing all texture.
+    for (let yy = 1; yy < sh - 1; yy++) {
+      for (let xx = 1; xx < sw - 1; xx++) {
+        const gx = Math.abs(gray[yy * sw + xx + 1] - gray[yy * sw + xx - 1]);
+        const gy = Math.abs(gray[(yy + 1) * sw + xx] - gray[(yy - 1) * sw + xx]);
+        if ((gx + gy) > 34 && Math.abs(gray[yy * sw + xx] - stats.lum) > 10) rawMask[yy * sw + xx] = 1;
+      }
+    }
+
+    // Close letters into a text block: horizontal dilation, then small cleanup.
+    dilateRect(rawMask, sw, sh, 5, 1, 2);
+    erodeRect(rawMask, sw, sh, 2, 1, 1);
+
+    const comps = components(rawMask, sw, sh, 0, 0, sw, sh, 14);
+    let best = null;
+    for (const c of comps) {
+      const rw = c.x2 - c.x1 + 1, rh = c.y2 - c.y1 + 1;
+      const rect = { x: search.x + c.x1, y: search.y + c.y1, w: rw, h: rh };
+      const aspect = rw / Math.max(1, rh);
+      const areaRel = (rw * rh) / Math.max(1, patchRect.w * patchRect.h);
+      const heightRel = rh / patchRect.h;
+      const widthRel = rw / patchRect.w;
+      const fill = c.area / Math.max(1, rw * rh);
+      const touchesSearch = c.x1 < 2 || c.y1 < 2 || c.x2 > sw - 3 || c.y2 > sh - 3;
+      const cxNorm = (rect.x + rect.w / 2 - patchRect.x) / patchRect.w;
+      const cyNorm = (rect.y + rect.h / 2 - patchRect.y) / patchRect.h;
+      let expectedBonus = 0;
+      if (expectedRect) {
+        const dc = dist(rect.x + rect.w / 2, rect.y + rect.h / 2, expectedRect.x + expectedRect.w / 2, expectedRect.y + expectedRect.h / 2);
+        expectedBonus = Math.max(0, 28 - dc / Math.max(1, patchRect.w) * 100);
+      } else {
+        expectedBonus = Math.max(0, 14 - Math.abs(cxNorm - 0.5) * 12 - Math.abs(cyNorm - 0.5) * 10);
+      }
+      let score = 0;
+      if (aspect > 1.4 && aspect < 14 && heightRel > 0.025 && heightRel < 0.32 && widthRel > 0.08 && widthRel < 0.92 && areaRel < 0.28 && !touchesSearch) {
+        score = 28 + Math.min(18, aspect * 2) + Math.min(16, widthRel * 30) + Math.min(14, heightRel * 80) + expectedBonus + Math.max(0, 12 - Math.abs(fill - 0.38) * 24);
+      }
+      if (!best || score > best.score) best = { rect, score, aspect, fill, widthRel, heightRel, search, expectedRect };
+    }
+    if (!best || best.score < 45) return null;
+    const contrast = textContrast(img, w, best.rect);
+    const confidence = clamp(best.score + Math.min(14, contrast / 4), 0, 100);
+    return { rect: best.rect, confidence, search, expectedRect, aspect: best.aspect, contrast };
+  }
+
+  function compareToMaster(textRect, patchRect, master) {
+    const now = rectToNorm(textRect, patchRect);
+    const ref = master.textNorm;
+    const dx = (now.cx - ref.cx) * 100;
+    const dy = (now.cy - ref.cy) * 100;
+    const dw = (now.w - ref.w) * 100;
+    const dh = (now.h - ref.h) * 100;
+    return { dx, dy, dw, dh, now, ref };
+  }
+
+  function updateHistory(reading) {
+    state.history.push(reading);
+    if (state.history.length > 18) state.history.shift();
+  }
+
+  function decide(reading) {
+    const recent = state.history.slice(-15);
+    const withPatch = recent.filter(r => r.patch && r.patch.confidence >= 55);
+    const withText = recent.filter(r => r.text && r.text.confidence >= 55);
+    const stable = stabilityScore(recent);
+    const sceneBad = reading.sceneScore < 58;
+
+    let title = 'BUSCANDO';
+    let message = 'Coloca el parche dentro de la guía.';
+    let cls = 'state-confirm';
+    let result = 'BUSCANDO';
+
+    if (!state.cameraReady) {
+      return { result: 'SIN_CÁMARA', title: 'SIN CÁMARA', message: 'Inicia la cámara.', cls: 'state-error', stable };
+    }
+    if (sceneBad) {
+      result = 'AJUSTAR_ESCENA';
+      title = 'AJUSTAR ESCENA';
+      message = reading.sceneReasons?.length ? `Corrige: ${reading.sceneReasons.join(', ')}.` : 'Mejora luz, fondo o estabilidad.';
+      cls = 'state-adjust';
+    } else if (!reading.patch || reading.patch.confidence < 55) {
+      result = 'NO_VEO_PARCHE';
+      title = 'NO VEO PARCHE';
+      message = 'Colócalo completo dentro de la guía y deja fondo visible alrededor.';
+      cls = 'state-adjust';
+    } else if (!reading.text || reading.text.confidence < 55) {
+      result = 'NO_LEE';
+      title = 'NO LEE TEXTO';
+      message = 'Veo el parche, pero no confirmo el texto. Acomoda, enfoca o mejora la luz.';
+      cls = 'state-no-read';
+    } else if (withPatch.length < 8 || withText.length < 7 || stable < 65) {
+      result = 'CONFIRMANDO';
+      title = 'CONFIRMANDO';
+      message = 'Mantén el parche quieto un momento.';
+      cls = 'state-confirm';
+    } else if (!state.master) {
+      result = 'MUESTRA_LISTA';
+      title = 'MUESTRA LISTA';
+      message = 'La lectura está estable. Puedes guardar esta pieza como muestra buena.';
+      cls = 'state-ok';
+    } else if (state.mode !== 'INSPECT') {
+      result = 'MUESTRA_GUARDADA';
+      title = 'MUESTRA GUARDADA';
+      message = 'Presiona “Inspeccionar producción” cuando quieras empezar.';
+      cls = 'state-confirm';
+    } else {
+      const tol = tolerance();
+      const cmp = medianCompare(recent);
+      const ok = cmp && Math.abs(cmp.dx) <= tol.x && Math.abs(cmp.dy) <= tol.y;
+      if (ok) {
+        result = 'OK';
+        title = 'OK';
+        message = 'Texto alineado contra la muestra buena.';
+        cls = 'state-ok';
+      } else {
+        result = 'REVISAR';
+        title = 'REVISAR';
+        message = describeDifference(cmp || reading.compare, tol);
+        cls = 'state-review';
+      }
+    }
+
+    const decision = { result, title, message, cls, stable, patchFrames: withPatch.length, textFrames: withText.length };
+    if (['OK', 'REVISAR', 'MUESTRA_LISTA'].includes(result)) state.stableReading = { reading, decision };
+    return decision;
+  }
+
+  function tolerance() {
+    const val = els.strictness.value;
+    if (val === 'strict') return { x: 3, y: 3 };
+    if (val === 'flexible') return { x: 8, y: 8 };
+    return { x: 5, y: 5 };
+  }
+
+  function stabilityScore(recent) {
+    const points = recent.filter(r => r.patch && r.text).map(r => ({
+      x: (r.text.rect.x + r.text.rect.w / 2 - r.patch.rect.x) / r.patch.rect.w,
+      y: (r.text.rect.y + r.text.rect.h / 2 - r.patch.rect.y) / r.patch.rect.h
+    }));
+    if (points.length < 3) return 0;
+    const mx = points.reduce((a, p) => a + p.x, 0) / points.length;
+    const my = points.reduce((a, p) => a + p.y, 0) / points.length;
+    const variance = points.reduce((a, p) => a + Math.hypot(p.x - mx, p.y - my), 0) / points.length;
+    return clamp(100 - variance * 1800, 0, 100);
+  }
+
+  function medianCompare(recent) {
+    const comps = recent.filter(r => r.compare).map(r => r.compare);
+    if (!comps.length) return null;
+    return {
+      dx: median(comps.map(c => c.dx)),
+      dy: median(comps.map(c => c.dy)),
+      dw: median(comps.map(c => c.dw)),
+      dh: median(comps.map(c => c.dh))
     };
-    img.src = state.master.templateDataUrl;
   }
 
-  function detectBlackCardSidePx() {
-    let src = null;
-    let gray = null;
-    let blurred = null;
-    let binary = null;
-    let contours = null;
-    let hierarchy = null;
-    try {
-      src = cv.imread(state.rawCanvas);
-      gray = new cv.Mat();
-      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-      blurred = new cv.Mat();
-      cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-      binary = new cv.Mat();
-      cv.threshold(blurred, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-      contours = new cv.MatVector();
-      hierarchy = new cv.Mat();
-      cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-      let best = null;
-      const imageArea = src.cols * src.rows;
-      for (let i = 0; i < contours.size(); i++) {
-        const cnt = contours.get(i);
-        const area = cv.contourArea(cnt);
-        if (area < imageArea * 0.01 || area > imageArea * 0.55) { cnt.delete(); continue; }
-        const rr = cv.minAreaRect(cnt);
-        const w = rr.size.width;
-        const h = rr.size.height;
-        const ratio = Math.max(w, h) / Math.max(1, Math.min(w, h));
-        if (ratio > 1.18) { cnt.delete(); continue; }
-        const side = (w + h) / 2;
-        const score = area * (1 / ratio);
-        if (!best || score > best.score) best = { side, score };
-        cnt.delete();
-      }
-      return best ? best.side : null;
-    } catch (err) {
-      console.warn(err);
-      return null;
-    } finally {
-      [src, gray, blurred, binary, hierarchy].forEach((m) => { if (m) m.delete(); });
-      if (contours) contours.delete();
+  function saveMasterFromCurrent() {
+    const candidate = state.stableReading?.reading || state.lastReading;
+    const decision = state.stableReading?.decision;
+    if (!candidate || !candidate.patch || !candidate.text) {
+      setStatus('NO HAY MUESTRA', 'Todavía no tengo parche y texto estables.', 'state-adjust');
+      return;
     }
+    if (decision && !['MUESTRA_LISTA', 'OK'].includes(decision.result) && candidate.text.confidence < 70) {
+      setStatus('MUESTRA NO SEGURA', 'Espera una lectura más estable antes de guardar.', 'state-adjust');
+      return;
+    }
+    const master = {
+      createdAt: new Date().toISOString(),
+      session: state.session,
+      textNorm: rectToNorm(candidate.text.rect, candidate.patch.rect),
+      patchAspect: candidate.patch.rect.w / Math.max(1, candidate.patch.rect.h),
+      textConfidence: candidate.text.confidence,
+      patchConfidence: candidate.patch.confidence
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(master));
+    state.master = master;
+    state.mode = 'MASTER_SAVED';
+    state.history = [];
+    els.btnInspect.disabled = false;
+    els.btnSaveMaster.disabled = true;
+    updateSteps(3);
+    setStatus('MUESTRA GUARDADA', 'Ahora puedes inspeccionar producción contra esta referencia.', 'state-ok');
   }
 
-  function drawOverlay() {
-    const w = dom.canvas.width;
-    const h = dom.canvas.height;
+  function drawOverlay(reading, decision) {
+    if (!els.showDebug.checked) return;
+    const { guide } = reading;
     ctx.save();
-    ctx.lineWidth = Math.max(2, w / 600);
-    ctx.font = `${Math.max(15, w / 55)}px Inter, system-ui, sans-serif`;
+    ctx.lineWidth = Math.max(3, els.canvas.width / 260);
+    ctx.setLineDash([12, 8]);
+    ctx.strokeStyle = '#2563eb';
+    ctx.strokeRect(guide.x, guide.y, guide.w, guide.h);
+    ctx.setLineDash([]);
 
-    if (state.master) {
-      const patch = pctToRect(state.master.patchPct);
-      const text = pctToRect(state.master.textPct);
-      drawRect(patch, "#1e63ff", "Guía del parche");
-      drawRect(text, "#16a34a", "Texto esperado");
+    if (reading.patch) {
+      drawRect(reading.patch.rect, '#2563eb', 'Parche');
+      if (state.master && reading.patch.rect) {
+        const exp = normToRect(state.master.textNorm, reading.patch.rect);
+        ctx.setLineDash([8, 6]);
+        drawRect(exp, '#94a3b8', 'Texto esperado');
+        ctx.setLineDash([]);
+      }
     }
+    if (reading.text) drawRect(reading.text.rect, '#f97316', 'Texto leído');
 
-    if (state.patchCandidate && !state.master) drawRect(state.patchCandidate, "#1e63ff", "Parche bueno");
-    if (state.textCandidate && !state.master) drawRect(state.textCandidate, "#16a34a", "Texto bueno");
-
-    const insp = state.smoothInspection || state.lastInspection;
-    if (state.flow === "inspect" && insp && insp.foundText) {
-      drawRect(insp.foundText, "#d97706", "Texto encontrado");
-      drawCenterLine(insp.expectedText, insp.foundText);
-    }
-
-    if (state.markingMode && state.markStart && state.markCurrent) {
-      const r = normalizeRect({ x: state.markStart.x, y: state.markStart.y, w: state.markCurrent.x - state.markStart.x, h: state.markCurrent.y - state.markStart.y });
-      drawRect(r, state.markingMode === "patch" ? "#1e63ff" : "#16a34a", state.markingMode === "patch" ? "Dibujando parche" : "Dibujando texto");
-    }
-
-    if (state.flow === "master" && !state.patchCandidate) drawCenterHelp("Marca el contorno del parche bueno");
-    else if (state.flow === "master" && state.patchCandidate && !state.textCandidate) drawCenterHelp("Ahora marca solo el bloque de texto");
-    else if (state.flow === "inspect" && state.master) drawTopHelp("Coloca cada parche dentro de la guía azul");
-
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    ctx.strokeStyle = '#d0d7e2';
+    roundRect(ctx, 12, els.canvas.height - 72, Math.min(els.canvas.width - 24, 620), 54, 14, true, true);
+    ctx.fillStyle = statusColor(decision.result);
+    ctx.font = `${Math.max(22, els.canvas.width / 34)}px system-ui, -apple-system, sans-serif`;
+    ctx.fillText(decision.title, 28, els.canvas.height - 38);
     ctx.restore();
   }
 
   function drawRect(r, color, label) {
-    ctx.save();
     ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(3, dom.canvas.width / 420);
-    ctx.strokeRect(r.x, r.y, r.w, r.h);
     ctx.fillStyle = color;
-    const pad = 8;
-    const textW = ctx.measureText(label).width + pad * 2;
-    const labelH = 26;
-    ctx.fillRect(r.x, Math.max(0, r.y - labelH), textW, labelH);
-    ctx.fillStyle = "white";
-    ctx.fillText(label, r.x + pad, Math.max(18, r.y - 7));
-    ctx.restore();
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.font = `${Math.max(14, els.canvas.width / 52)}px system-ui, -apple-system, sans-serif`;
+    ctx.fillText(label, r.x + 4, Math.max(18, r.y - 6));
   }
 
-  function drawCenterLine(a, b) {
-    const ac = centerOf(a);
-    const bc = centerOf(b);
-    ctx.save();
-    ctx.strokeStyle = "#d97706";
-    ctx.setLineDash([10, 8]);
-    ctx.beginPath();
-    ctx.moveTo(ac.x, ac.y);
-    ctx.lineTo(bc.x, bc.y);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = "#16a34a";
-    ctx.beginPath(); ctx.arc(ac.x, ac.y, 7, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#d97706";
-    ctx.beginPath(); ctx.arc(bc.x, bc.y, 7, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
+  function statusColor(result) {
+    if (result === 'OK' || result === 'MUESTRA_LISTA') return '#16803c';
+    if (result === 'REVISAR') return '#b7791f';
+    if (result === 'NO_LEE' || result === 'AJUSTAR_ESCENA') return '#1d4ed8';
+    return '#344054';
   }
 
-  function drawCenterHelp(text) {
-    ctx.save();
-    ctx.fillStyle = "rgba(255,255,255,.86)";
-    ctx.strokeStyle = "#c8d8ff";
-    const bw = Math.min(dom.canvas.width - 60, 620);
-    const bh = 72;
-    const x = (dom.canvas.width - bw) / 2;
-    const y = (dom.canvas.height - bh) / 2;
-    roundRect(ctx, x, y, bw, bh, 18);
-    ctx.fill(); ctx.stroke();
-    ctx.fillStyle = "#123887";
-    ctx.textAlign = "center";
-    ctx.font = `${Math.max(18, dom.canvas.width / 52)}px Inter, system-ui, sans-serif`;
-    ctx.fillText(text, dom.canvas.width / 2, y + 45);
-    ctx.restore();
+  function updateUI(reading, decision) {
+    setStatus(decision.title, decision.message, decision.cls);
+    els.sceneScore.textContent = fmtPct(reading.sceneScore);
+    els.patchScore.textContent = reading.patch ? fmtPct(reading.patch.confidence) : '--';
+    els.textScore.textContent = reading.text ? fmtPct(reading.text.confidence) : '--';
+    els.stableScore.textContent = fmtPct(decision.stable || 0);
+    const cmp = medianCompare(state.history.slice(-15)) || reading.compare;
+    els.deltaX.textContent = cmp ? directionX(cmp.dx) : '--';
+    els.deltaY.textContent = cmp ? directionY(cmp.dy) : '--';
+    els.diagnostic.textContent = decision.message;
+    els.btnSaveMaster.disabled = !(decision.result === 'MUESTRA_LISTA' || (!state.master && reading.patch && reading.text && reading.text.confidence > 68));
+    if (!state.master && state.cameraReady) updateSteps(decision.result === 'MUESTRA_LISTA' ? 2 : 1);
   }
 
-  function drawTopHelp(text) {
-    ctx.save();
-    ctx.fillStyle = "rgba(255,255,255,.88)";
-    ctx.strokeStyle = "#dbe3ef";
-    const bw = Math.min(dom.canvas.width - 50, 640);
-    const x = (dom.canvas.width - bw) / 2;
-    roundRect(ctx, x, 16, bw, 44, 14);
-    ctx.fill(); ctx.stroke();
-    ctx.fillStyle = "#172033";
-    ctx.textAlign = "center";
-    ctx.font = `${Math.max(16, dom.canvas.width / 64)}px Inter, system-ui, sans-serif`;
-    ctx.fillText(text, dom.canvas.width / 2, 44);
-    ctx.restore();
+  function setStatus(title, message, cls) {
+    els.statusTitle.textContent = title;
+    els.statusMessage.textContent = message;
+    els.statusStrip.className = `status-strip ${cls || ''}`;
   }
 
-  function renderMeasurements() {
-    const insp = state.smoothInspection || state.lastInspection;
-    if (state.flow !== "inspect" || !insp) {
-      if (!state.master) {
-        setVerdict("ESPERA", "wait");
-        dom.qualityValue.textContent = "--%";
-        dom.readConfidence.textContent = "--%";
-        dom.reasonText.textContent = "Primero guarda una muestra buena.";
-        dom.dxValue.textContent = "--";
-        dom.dyValue.textContent = "--";
-        dom.visualMatch.textContent = "--";
-        dom.patchSize.textContent = "--";
-        dom.textSize.textContent = "--";
-      }
-      return;
-    }
-
-    setVerdict(insp.verdict, insp.verdictClass);
-    dom.qualityValue.textContent = `${Math.round(insp.quality)}%`;
-    dom.readConfidence.textContent = `${Math.round(insp.readConfidence)}%`;
-    dom.reasonText.textContent = insp.reason;
-    dom.dxValue.textContent = insp.dxHuman;
-    dom.dyValue.textContent = insp.dyHuman;
-    dom.visualMatch.textContent = `${Math.round(insp.visualMatch)}%`;
-    dom.patchSize.textContent = formatSize(insp.patchRect);
-    dom.textSize.textContent = insp.foundText ? formatSize(insp.foundText) : "No leído";
+  function updateSteps(activeIndex) {
+    const lis = Array.from(els.stepsList.querySelectorAll('li'));
+    lis.forEach((li, i) => li.classList.toggle('active', i === activeIndex));
   }
 
-  function updateUi() {
-    const hasCamera = state.cameraRunning;
-    const hasPatch = Boolean(state.patchCandidate || state.master);
-    const hasText = Boolean(state.textCandidate || state.master);
-    const hasMaster = Boolean(state.master);
-
-    dom.btnMarkPatch.disabled = !hasCamera || state.flow === "inspect";
-    dom.btnMarkText.disabled = !hasCamera || !hasPatch || state.flow === "inspect";
-    dom.btnSaveMaster.disabled = !hasCamera || !state.patchCandidate || !state.textCandidate;
-    dom.btnStartInspect.disabled = !hasMaster;
-    dom.btnUsePatchScale.disabled = !(state.patchCandidate || state.master);
-    dom.btnCalibrateCard.disabled = !hasCamera || !state.cvReady;
-
-    setStep(dom.stepCamera, state.flow === "camera", hasCamera);
-    setStep(dom.stepMaster, state.flow === "master", hasMaster);
-    setStep(dom.stepInspect, state.flow === "inspect", false);
-
-    dom.friendlyPatch.textContent = hasPatch ? "Listo" : "Pendiente";
-    dom.friendlyText.textContent = hasText ? "Listo" : "Pendiente";
-    dom.friendlyMaster.textContent = hasMaster ? "Guardada" : "Pendiente";
-    dom.friendlyScale.textContent = state.pxPerMm ? `${state.scaleSource}` : "Opcional / sin mm";
-    dom.lockedScale.textContent = state.pxPerMm ? `${state.pxPerMm.toFixed(2)} px/mm · ${state.scaleSource}` : "Sin mm";
-
-    let instruction = "Toca “Iniciar cámara”. Luego coloca un parche correcto para crear la muestra maestra.";
-    let action = "Inicia la cámara del celular.";
-    if (state.flow === "master") {
-      if (!state.patchCandidate) {
-        instruction = "Coloca un parche que calidad considere correcto. Toca “Marcar parche bueno” y dibuja alrededor de todo el parche.";
-        action = "Marca primero el rectángulo completo del parche bueno.";
-      } else if (!state.textCandidate) {
-        instruction = "Ahora toca “Marcar texto bueno” y dibuja solo sobre las letras. No metas el borde.";
-        action = "Marca solo el bloque de texto del parche bueno.";
-      } else {
-        instruction = "Revisa que los rectángulos estén bien. Luego toca “Guardar muestra maestra”.";
-        action = "Guarda la muestra maestra para empezar a comparar producción.";
-      }
-    } else if (state.flow === "inspect") {
-      instruction = "Coloca cada parche dentro de la guía azul. El sistema buscará el texto en la zona aprendida y comparará contra la muestra.";
-      action = "Coloca el parche de producción dentro de la guía. Mantén el celular fijo.";
-    }
-    if (state.markingMode) {
-      instruction = state.markingMode === "patch" ? "Arrastra con el dedo sobre TODO el parche." : "Arrastra con el dedo SOLO sobre el texto.";
-      action = instruction;
-    }
-    dom.operatorInstruction.textContent = instruction;
-    dom.nextAction.textContent = action;
+  function maybeSendTelemetry(reading, decision, ts) {
+    if (ts - state.telemetryLast < 250) return;
+    state.telemetryLast = ts;
+    sendTelemetry(makeTelemetry(reading, decision));
   }
 
-  function setStep(el, active, done) {
-    el.classList.toggle("active", active);
-    el.classList.toggle("done", done && !active);
-  }
-
-  function setMainState(text, cls) {
-    dom.mainState.textContent = text;
-    dom.statusDot.className = `status-dot ${cls || "unstable"}`;
-  }
-
-  function setVerdict(text, cls) {
-    dom.verdict.textContent = text;
-    dom.verdict.className = `verdict ${cls || "wait"}`;
-  }
-
-  function publishTelemetryThrottled() {
-    const now = Date.now();
-    if (now - state.lastSentAt < 420) return;
-    state.lastSentAt = now;
-    const insp = state.smoothInspection || state.lastInspection;
-    const payload = {
-      type: "inspection",
-      version: state.version,
-      ts: now,
+  function makeTelemetry(reading, decision) {
+    const cmp = medianCompare(state.history.slice(-15)) || reading.compare;
+    const expected = state.master && reading.patch ? normToRect(state.master.textNorm, reading.patch.rect) : null;
+    return {
+      type: 'telemetry',
       session: state.session,
-      flow: state.flow,
-      cameraRunning: state.cameraRunning,
-      masterSaved: Boolean(state.master),
-      scale: state.pxPerMm,
-      scaleSource: state.scaleSource,
-      verdict: insp ? insp.verdict : (state.master ? "ESPERA" : "SIN MUESTRA"),
-      verdictClass: insp ? insp.verdictClass : "wait",
-      quality: insp ? insp.quality : null,
-      readConfidence: insp ? insp.readConfidence : null,
-      visualMatch: insp ? insp.visualMatch : null,
-      reason: insp ? insp.reason : dom.reasonText.textContent,
-      dxHuman: insp ? insp.dxHuman : null,
-      dyHuman: insp ? insp.dyHuman : null,
-      dxPct: insp ? insp.dxPct : null,
-      dyPct: insp ? insp.dyPct : null,
-      patchRect: insp ? rectToPct(insp.patchRect) : (state.master ? state.master.patchPct : null),
-      expectedText: insp ? rectToPct(insp.expectedText) : (state.master ? state.master.textPct : null),
-      foundText: insp && insp.foundText ? rectToPct(insp.foundText) : null,
+      version: '9.0.0',
+      mode: state.mode,
+      result: decision.result,
+      title: decision.title,
+      message: decision.message,
+      sceneScore: round(reading.sceneScore),
+      patchScore: reading.patch ? round(reading.patch.confidence) : 0,
+      textScore: reading.text ? round(reading.text.confidence) : 0,
+      stableScore: round(decision.stable || 0),
+      dx: cmp ? round(cmp.dx, 1) : null,
+      dy: cmp ? round(cmp.dy, 1) : null,
+      patchRect: reading.patch ? normalizeRect(reading.patch.rect, els.canvas.width, els.canvas.height) : null,
+      textRect: reading.text ? normalizeRect(reading.text.rect, els.canvas.width, els.canvas.height) : null,
+      expectedTextRect: expected ? normalizeRect(expected, els.canvas.width, els.canvas.height) : null,
+      timestamp: new Date().toLocaleTimeString()
     };
-    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify(payload));
-    }
   }
 
-  function connectWebSocket() {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const url = `${proto}://${location.host}/ws/${state.session}/capture`;
-    try {
-      state.ws = new WebSocket(url);
-      state.ws.addEventListener("open", () => { state.wsConnected = true; });
-      state.ws.addEventListener("close", () => { state.wsConnected = false; setTimeout(connectWebSocket, 1600); });
-      state.ws.addEventListener("error", () => { state.wsConnected = false; });
-    } catch (err) {
-      console.warn(err);
-      setTimeout(connectWebSocket, 2000);
-    }
+  function sendTelemetry(payload, force = false) {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    try { state.ws.send(JSON.stringify(payload)); } catch {}
   }
 
-  function saveMasterToStorage() {
-    if (!state.master) return;
-    localStorage.setItem("inspector_v6_master", JSON.stringify(state.master));
+  function saveEvidence() {
+    const telemetry = state.lastReading ? makeTelemetry(state.lastReading, decide(state.lastReading)) : { message: 'Sin lectura' };
+    let screenshot = '';
+    try { screenshot = els.canvas.toDataURL('image/jpeg', 0.82); } catch {}
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Evidencia inspección</title><style>body{font-family:Arial;padding:24px}img{max-width:100%;border:1px solid #ccc;border-radius:12px}pre{background:#f3f4f6;padding:16px;border-radius:12px;white-space:pre-wrap}</style></head><body><h1>Evidencia de inspección</h1><p>${new Date().toLocaleString()}</p>${screenshot ? `<img src="${screenshot}" />` : ''}<pre>${escapeHtml(JSON.stringify(telemetry, null, 2))}</pre></body></html>`;
+    const blob = new Blob([html], { type: 'text/html' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `evidencia-inspeccion-${Date.now()}.html`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
-  function saveScaleToStorage() {
-    localStorage.setItem("inspector_v6_scale", JSON.stringify({ pxPerMm: state.pxPerMm, scaleSource: state.scaleSource }));
+  // ---------- Image utilities ----------
+  function luma(r, g, b) { return 0.299 * r + 0.587 * g + 0.114 * b; }
+  function chroma(r, g, b) { const y = luma(r, g, b); return Math.sqrt((r-y)**2 + (g-y)**2 + (b-y)**2); }
+  function colorDist(r1, g1, b1, r2, g2, b2) { return Math.sqrt((r1-r2)**2 + (g1-g2)**2 + (b1-b2)**2); }
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  function dist(x1, y1, x2, y2) { return Math.hypot(x1 - x2, y1 - y2); }
+  function round(v, d = 0) { const m = 10 ** d; return Math.round((v || 0) * m) / m; }
+  function fmtPct(v) { return Number.isFinite(v) ? `${Math.round(v)}%` : '--'; }
+  function median(arr) { if (!arr.length) return 0; const s = [...arr].sort((a,b)=>a-b); const m = Math.floor(s.length/2); return s.length%2?s[m]:(s[m-1]+s[m])/2; }
+  function directionX(v) { if (v == null) return '--'; if (Math.abs(v) < 0.6) return 'centrado'; return `${Math.abs(v).toFixed(1)}% ${v > 0 ? 'derecha' : 'izquierda'}`; }
+  function directionY(v) { if (v == null) return '--'; if (Math.abs(v) < 0.6) return 'altura correcta'; return `${Math.abs(v).toFixed(1)}% ${v > 0 ? 'abajo' : 'arriba'}`; }
+  function describeDifference(cmp, tol) {
+    if (!cmp) return 'Lectura fuera de tolerancia. Revisar manualmente.';
+    const parts = [];
+    if (Math.abs(cmp.dx) > tol.x) parts.push(`texto ${directionX(cmp.dx)}`);
+    if (Math.abs(cmp.dy) > tol.y) parts.push(`texto ${directionY(cmp.dy)}`);
+    return parts.length ? `Revisar: ${parts.join(' y ')} contra la muestra.` : 'Revisar visualmente.';
   }
 
-  function loadMasterFromStorage() {
-    try {
-      const scaleRaw = localStorage.getItem("inspector_v6_scale");
-      if (scaleRaw) {
-        const s = JSON.parse(scaleRaw);
-        state.pxPerMm = s.pxPerMm || null;
-        state.scaleSource = s.scaleSource || "Sin mm";
+  function rectOverlapRatio(a, b) {
+    const x1 = Math.max(a.x, b.x), y1 = Math.max(a.y, b.y);
+    const x2 = Math.min(a.x + a.w, b.x + b.w), y2 = Math.min(a.y + a.h, b.y + b.h);
+    const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+    return inter / Math.max(1, a.w * a.h);
+  }
+
+  function clampRect(r, bounds, w, h) {
+    const x = clamp(r.x, bounds.x, bounds.x + bounds.w - 1);
+    const y = clamp(r.y, bounds.y, bounds.y + bounds.h - 1);
+    const x2 = clamp(r.x + r.w, bounds.x + 1, bounds.x + bounds.w);
+    const y2 = clamp(r.y + r.h, bounds.y + 1, bounds.y + bounds.h);
+    return { x: Math.max(0, x), y: Math.max(0, y), w: Math.min(w, x2) - Math.max(0, x), h: Math.min(h, y2) - Math.max(0, y) };
+  }
+
+  function rectToNorm(rect, patch) {
+    return {
+      cx: (rect.x + rect.w / 2 - patch.x) / patch.w,
+      cy: (rect.y + rect.h / 2 - patch.y) / patch.h,
+      w: rect.w / patch.w,
+      h: rect.h / patch.h
+    };
+  }
+  function normToRect(norm, patch) {
+    return {
+      x: patch.x + (norm.cx - norm.w / 2) * patch.w,
+      y: patch.y + (norm.cy - norm.h / 2) * patch.h,
+      w: norm.w * patch.w,
+      h: norm.h * patch.h
+    };
+  }
+  function normalizeRect(r, w, h) { return { x: r.x / w, y: r.y / h, w: r.w / w, h: r.h / h }; }
+
+  function regionStats(img, w, rect) {
+    const d = img.data;
+    const x1 = Math.max(0, Math.floor(rect.x)), y1 = Math.max(0, Math.floor(rect.y));
+    const x2 = Math.min(w, Math.ceil(rect.x + rect.w)), y2 = Math.min(Math.floor(img.data.length / 4 / w), Math.ceil(rect.y + rect.h));
+    let rs=0, gs=0, bs=0, n=0;
+    for (let y = y1; y < y2; y += 3) {
+      for (let x = x1; x < x2; x += 3) {
+        const i=(y*w+x)*4; rs+=d[i]; gs+=d[i+1]; bs+=d[i+2]; n++;
       }
-      const raw = localStorage.getItem("inspector_v6_master");
-      if (!raw) return;
-      state.master = JSON.parse(raw);
-      if (state.master.pxPerMm) {
-        state.pxPerMm = state.master.pxPerMm;
-        state.scaleSource = state.master.scaleSource || "Muestra";
+    }
+    const r=rs/Math.max(1,n), g=gs/Math.max(1,n), b=bs/Math.max(1,n);
+    return { r, g, b, lum:luma(r,g,b) };
+  }
+
+  function textContrast(img, w, rect) {
+    const stats = regionStats(img, w, rect);
+    return Math.abs(stats.lum - regionStats(img, w, { x: rect.x-rect.w*.2, y: rect.y-rect.h*.2, w: rect.w*1.4, h: rect.h*1.4 }).lum) + 20;
+  }
+
+  function morph(mask, w, h, x1, y1, x2, y2, iterations) {
+    for (let i=0;i<iterations;i++) dilate(mask,w,h,x1,y1,x2,y2);
+    for (let i=0;i<iterations;i++) erode(mask,w,h,x1,y1,x2,y2);
+  }
+  function dilate(mask,w,h,x1,y1,x2,y2){
+    const src = mask.slice();
+    for(let y=y1+1;y<y2-1;y++) for(let x=x1+1;x<x2-1;x++){
+      const idx=y*w+x;if(src[idx]) continue;
+      if(src[idx-1]||src[idx+1]||src[idx-w]||src[idx+w]||src[idx-w-1]||src[idx-w+1]||src[idx+w-1]||src[idx+w+1]) mask[idx]=1;
+    }
+  }
+  function erode(mask,w,h,x1,y1,x2,y2){
+    const src = mask.slice();
+    for(let y=y1+1;y<y2-1;y++) for(let x=x1+1;x<x2-1;x++){
+      const idx=y*w+x;if(!src[idx]) continue;
+      if(!(src[idx-1]&&src[idx+1]&&src[idx-w]&&src[idx+w])) mask[idx]=0;
+    }
+  }
+  function dilateRect(mask,w,h,rx,ry,iterations){
+    for(let it=0;it<iterations;it++){
+      const src=mask.slice();
+      for(let y=ry;y<h-ry;y++) for(let x=rx;x<w-rx;x++){
+        const idx=y*w+x;if(src[idx]) continue;
+        let hit=false;
+        for(let yy=-ry;yy<=ry&&!hit;yy++) for(let xx=-rx;xx<=rx;xx++) if(src[(y+yy)*w+x+xx]){hit=true;break;}
+        if(hit) mask[idx]=1;
       }
-      state.flow = "inspect";
-    } catch (err) {
-      console.warn("No se pudo cargar muestra", err);
+    }
+  }
+  function erodeRect(mask,w,h,rx,ry,iterations){
+    for(let it=0;it<iterations;it++){
+      const src=mask.slice();
+      for(let y=ry;y<h-ry;y++) for(let x=rx;x<w-rx;x++){
+        const idx=y*w+x;if(!src[idx]) continue;
+        let ok=true;
+        for(let yy=-ry;yy<=ry&&ok;yy++) for(let xx=-rx;xx<=rx;xx++) if(!src[(y+yy)*w+x+xx]){ok=false;break;}
+        if(!ok) mask[idx]=0;
+      }
     }
   }
 
-  function rectToPct(r) {
-    return { x: r.x / dom.canvas.width, y: r.y / dom.canvas.height, w: r.w / dom.canvas.width, h: r.h / dom.canvas.height };
+  function components(mask, w, h, x1, y1, x2, y2, minArea) {
+    const visited = new Uint8Array(w*h);
+    const comps = [];
+    const qx = [], qy = [];
+    for (let y=y1; y<y2; y++) {
+      for (let x=x1; x<x2; x++) {
+        const start = y*w+x;
+        if (!mask[start] || visited[start]) continue;
+        let head=0, area=0, minx=x, maxx=x, miny=y, maxy=y;
+        qx.length=0; qy.length=0; qx.push(x); qy.push(y); visited[start]=1;
+        while(head<qx.length){
+          const cx=qx[head], cy=qy[head++]; area++;
+          if(cx<minx)minx=cx;if(cx>maxx)maxx=cx;if(cy<miny)miny=cy;if(cy>maxy)maxy=cy;
+          const neighbors=[[cx+1,cy],[cx-1,cy],[cx,cy+1],[cx,cy-1]];
+          for(const [nx,ny] of neighbors){
+            if(nx<x1||nx>=x2||ny<y1||ny>=y2) continue;
+            const ni=ny*w+nx;
+            if(mask[ni]&&!visited[ni]){visited[ni]=1;qx.push(nx);qy.push(ny);}
+          }
+        }
+        if(area>=minArea) comps.push({area,x1:minx,y1:miny,x2:maxx,y2:maxy});
+      }
+    }
+    comps.sort((a,b)=>b.area-a.area);
+    return comps;
   }
 
-  function pctToRect(p) {
-    return { x: p.x * dom.canvas.width, y: p.y * dom.canvas.height, w: p.w * dom.canvas.width, h: p.h * dom.canvas.height };
+  function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();
+    if(fill) ctx.fill(); if(stroke) ctx.stroke();
   }
 
-  function cropToDataUrl(r) {
-    const rr = clampRectToCanvas(r);
-    const c = document.createElement("canvas");
-    c.width = Math.max(8, Math.round(rr.w));
-    c.height = Math.max(8, Math.round(rr.h));
-    const cctx = c.getContext("2d");
-    cctx.drawImage(state.rawCanvas, rr.x, rr.y, rr.w, rr.h, 0, 0, c.width, c.height);
-    return c.toDataURL("image/png");
-  }
-
-  function safeCvRect(r, maxW, maxH) {
-    const rr = clipRect({ x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) }, { x: 0, y: 0, w: maxW, h: maxH });
-    return new cv.Rect(rr.x, rr.y, Math.max(1, rr.w), Math.max(1, rr.h));
-  }
-
-  function formatSize(r) {
-    if (!r) return "--";
-    if (state.pxPerMm) return `${(r.w / state.pxPerMm).toFixed(1)} × ${(r.h / state.pxPerMm).toFixed(1)} mm`;
-    return `${r.w.toFixed(0)} × ${r.h.toFixed(0)} px`;
-  }
-
-  function centerOf(r) { return { x: r.x + r.w / 2, y: r.y + r.h / 2 }; }
-  function normalizeRect(r) {
-    const x = r.w < 0 ? r.x + r.w : r.x;
-    const y = r.h < 0 ? r.y + r.h : r.y;
-    return clampRectToCanvas({ x, y, w: Math.abs(r.w), h: Math.abs(r.h) });
-  }
-  function clampRectToCanvas(r) { return clipRect(r, { x: 0, y: 0, w: dom.canvas.width, h: dom.canvas.height }); }
-  function clipRect(r, bounds) {
-    const x = clamp(r.x, bounds.x, bounds.x + bounds.w);
-    const y = clamp(r.y, bounds.y, bounds.y + bounds.h);
-    const x2 = clamp(r.x + r.w, bounds.x, bounds.x + bounds.w);
-    const y2 = clamp(r.y + r.h, bounds.y, bounds.y + bounds.h);
-    return { x, y, w: Math.max(0, x2 - x), h: Math.max(0, y2 - y) };
-  }
-  function rectInside(inner, outer) {
-    return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
-  }
-  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-  function lerp(a, b, t) { return a + (b - a) * t; }
-  function roundRect(c, x, y, w, h, r) {
-    c.beginPath();
-    c.moveTo(x + r, y);
-    c.lineTo(x + w - r, y);
-    c.quadraticCurveTo(x + w, y, x + w, y + r);
-    c.lineTo(x + w, y + h - r);
-    c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    c.lineTo(x + r, y + h);
-    c.quadraticCurveTo(x, y + h, x, y + h - r);
-    c.lineTo(x, y + r);
-    c.quadraticCurveTo(x, y, x + r, y);
-    c.closePath();
-  }
+  function escapeHtml(str) { return String(str).replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c])); }
 })();

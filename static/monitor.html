@@ -3,56 +3,62 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Monitor | Inspector de Parches V6</title>
+  <title>Inspector de Parches · Monitor</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
-<body class="page monitor-page">
+<body class="app-body monitor-body">
   <header class="topbar">
     <div>
-      <p class="eyebrow">Monitor PC · V6 muestra maestra</p>
-      <h1>Inspección en vivo</h1>
+      <h1>Monitor de inspección</h1>
+      <p>Vista PC · recibe datos del celular</p>
     </div>
-    <form id="connectForm" class="connect-box">
-      <label for="sessionInput">Código del celular</label>
-      <input id="sessionInput" autocomplete="off" maxlength="6" placeholder="ABC123" />
-      <button class="btn primary" type="submit">Conectar</button>
-    </form>
+    <div class="connect-box">
+      <input id="sessionInput" maxlength="6" placeholder="ABC123" />
+      <button id="btnConnect" class="btn btn-primary">Conectar</button>
+    </div>
   </header>
 
-  <main class="monitor-grid">
-    <section class="panel monitor-verdict-card">
-      <h2>Resultado</h2>
-      <div id="monitorVerdict" class="verdict large">SIN DATOS</div>
-      <p id="monitorReason" class="note">Conecta usando el código del celular.</p>
-      <div class="score-line"><span>Calidad contra muestra</span><strong id="monitorQuality">--%</strong></div>
-      <div class="score-line"><span>Seguridad de lectura</span><strong id="monitorConfidence">--%</strong></div>
+  <main class="monitor-layout">
+    <section class="monitor-status" id="monitorStatus">
+      <span class="eyebrow">Resultado</span>
+      <strong id="resultTitle">SIN CONEXIÓN</strong>
+      <p id="resultMessage">Escribe el código de sesión del celular.</p>
     </section>
 
-    <section class="panel diagram-card">
-      <h2>Guía visual</h2>
-      <canvas id="diagramCanvas" width="640" height="420"></canvas>
-      <p class="note">Azul: parche guía. Verde: texto esperado. Naranja: texto encontrado.</p>
-    </section>
+    <section class="monitor-grid">
+      <article class="card big-card">
+        <h2>Lectura</h2>
+        <div class="metric-grid monitor-metrics">
+          <div class="metric"><span>Escena</span><strong id="mScene">--</strong></div>
+          <div class="metric"><span>Parche</span><strong id="mPatch">--</strong></div>
+          <div class="metric"><span>Texto</span><strong id="mText">--</strong></div>
+          <div class="metric"><span>Estable</span><strong id="mStable">--</strong></div>
+        </div>
+        <div class="readout">
+          <p><span>Lateral</span><strong id="mDeltaX">--</strong></p>
+          <p><span>Arriba / abajo</span><strong id="mDeltaY">--</strong></p>
+          <p><span>Modo</span><strong id="mMode">--</strong></p>
+          <p><span>Hora</span><strong id="mTime">--</strong></p>
+        </div>
+      </article>
 
-    <section class="panel">
-      <h2>Movimiento detectado</h2>
-      <div class="metric-grid three">
-        <div class="metric"><span>Lados</span><strong id="monitorDx">--</strong></div>
-        <div class="metric"><span>Arriba / abajo</span><strong id="monitorDy">--</strong></div>
-        <div class="metric"><span>Parecido visual</span><strong id="monitorVisual">--</strong></div>
-      </div>
-    </section>
+      <article class="card diagram-card">
+        <h2>Diagrama</h2>
+        <canvas id="diagram" width="640" height="420"></canvas>
+        <div class="legend">
+          <span><i class="blue"></i> Parche</span>
+          <span><i class="gray"></i> Texto esperado</span>
+          <span><i class="orange"></i> Texto leído</span>
+        </div>
+      </article>
 
-    <section class="panel">
-      <h2>Estado del sistema</h2>
-      <div class="friendly-status"><span>Sesión:</span><strong id="monitorSession">---</strong></div>
-      <div class="friendly-status"><span>Flujo:</span><strong id="monitorFlow">---</strong></div>
-      <div class="friendly-status"><span>Muestra:</span><strong id="monitorMaster">---</strong></div>
-      <div class="friendly-status"><span>Escala:</span><strong id="monitorScale">---</strong></div>
-      <div class="friendly-status"><span>Último dato:</span><strong id="monitorLast">---</strong></div>
+      <article class="card history-card">
+        <h2>Últimas lecturas</h2>
+        <div id="history" class="history"></div>
+      </article>
     </section>
   </main>
 
-  <script defer src="/static/monitor.js"></script>
+  <script src="/static/monitor.js"></script>
 </body>
 </html>
