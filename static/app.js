@@ -9,6 +9,7 @@
     btnCamera: $("btnCamera"),
     btnCalibrate: $("btnCalibrate"),
     btnSaveMaster: $("btnSaveMaster"),
+    btnMarkText: $("btnMarkText"),
     btnNewPatch: $("btnNewPatch"),
     btnRecalibrate: $("btnRecalibrate"),
     mainState: $("mainState"),
@@ -55,7 +56,7 @@
   const ctx = dom.canvas.getContext("2d", { alpha: false });
 
   const state = {
-    version: "4.0.0",
+    version: "5.0.0",
     cvReady: false,
     cameraRunning: false,
     processing: false,
@@ -76,8 +77,16 @@
     lastValidInspectionAt: 0,
     payloadHistory: [],
     lastPayload: null,
+    rawCanvas: document.createElement("canvas"),
+    rawCtx: null,
+    manualTextMode: false,
+    manualStart: null,
+    manualCurrent: null,
+    manualTextOverride: null,
+    lastTextTemplateCandidate: null,
   };
 
+  state.rawCtx = state.rawCanvas.getContext("2d", { alpha: false });
   dom.sessionCode.textContent = state.session;
   setupControls();
   updateFlowUi();
@@ -96,10 +105,14 @@
     dom.btnCamera.addEventListener("click", startCamera);
     dom.btnCalibrate.addEventListener("click", lockCalibration);
     dom.btnSaveMaster.addEventListener("click", saveMasterPatch);
+    dom.btnMarkText.addEventListener("click", toggleManualTextMode);
+    setupManualTextPointerEvents();
     dom.btnNewPatch.addEventListener("click", () => {
       if (state.calibration && state.master) {
         state.flow = "inspect";
         state.smoothInspection = null;
+        state.manualTextOverride = null;
+        state.manualTextMode = false;
         updateFlowUi("Coloca el parche dentro del recuadro. Espera a que la lectura se estabilice.");
       } else if (state.calibration) {
         state.flow = "master";
@@ -113,6 +126,9 @@
       state.smoothCard = null;
       state.smoothInspection = null;
       state.currentInspection = null;
+      state.manualTextMode = false;
+      state.manualTextOverride = null;
+      state.lastTextTemplateCandidate = null;
       state.flow = state.cameraRunning ? "card" : "camera";
       dom.lockedScale.textContent = "--";
       setMainState(state.cameraRunning ? "COLOCA TARJETA" : "SIN CÁMARA", state.cameraRunning ? "warn" : "unstable");
@@ -173,9 +189,9 @@
       action = "Coloca la tarjeta con el cuadro negro 5×5 visible, plano y bien iluminado.";
     } else if (active === "master") {
       instruction = "Retira la tarjeta y coloca un parche que tú consideres correcto. Esta será la muestra buena.";
-      action = "Coloca un parche bueno y toca “Guardar parche bueno” cuando el texto se detecte estable.";
+      action = "Coloca un parche bueno. Si el texto no se detecta, toca “Marcar texto manual” y dibuja un rectángulo sobre el texto.";
     } else if (active === "inspect") {
-      instruction = "Coloca el parche de producción. La app lo comparará contra la muestra buena, no contra un centro matemático inventado.";
+      instruction = "Coloca el parche de producción. La app lo comparará contra la muestra buena y buscará el texto en la zona aprendida.";
       action = "Coloca el parche dentro de la guía. Mantén el celular quieto un momento.";
     }
 
@@ -244,6 +260,8 @@
     const scale = Math.min(1, maxW / vw);
     dom.canvas.width = Math.round(vw * scale);
     dom.canvas.height = Math.round(vh * scale);
+    state.rawCanvas.width = dom.canvas.width;
+    state.rawCanvas.height = dom.canvas.height;
   }
 
   function loop() {
@@ -265,12 +283,13 @@
 
   function processFrame() {
     state.processing = true;
-    ctx.drawImage(dom.video, 0, 0, dom.canvas.width, dom.canvas.height);
+    state.rawCtx.drawImage(dom.video, 0, 0, dom.canvas.width, dom.canvas.height);
+    ctx.drawImage(state.rawCanvas, 0, 0);
     let src = null;
     let gray = null;
 
     try {
-      src = cv.imread(dom.canvas);
+      src = cv.imread(state.rawCanvas);
       gray = new cv.Mat();
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
@@ -286,7 +305,20 @@
       const pxPerMm = state.calibration ? state.calibration.pxPerMm : null;
       let inspection = null;
       if ((state.flow === "master" || state.flow === "inspect") && pxPerMm) {
-        const rawInspection = detectPatchAndText(gray, pxPerMm, state.master);
+        let rawInspection = detectPatchAndText(gray, pxPerMm, state.master);
+        if (rawInspection && rawInspection.patch && state.manualTextOverride) {
+          const manualText = textFromManualBox(state.manualTextOverride, pxPerMm);
+          rawInspection = {
+            patch: rawInspection.patch,
+            text: manualText,
+            metrics: computeAlignmentMetricsFromPlain(rawInspection.patch, manualText, pxPerMm),
+            manual: true,
+          };
+        }
+        if (rawInspection && rawInspection.text) {
+          const template = extractTemplateFromRawFrame(rawInspection.text.bbox || bboxFromBoxText(rawInspection.text));
+          if (template) state.lastTextTemplateCandidate = template;
+        }
         inspection = smoothInspection(rawInspection);
       }
       state.currentInspection = inspection;
@@ -510,6 +542,161 @@
     updateFlowUi("Calibración guardada. Retira la tarjeta y coloca un parche BUENO para usarlo como muestra correcta.");
   }
 
+
+  // ---------- Marcado manual y aprendizaje visual del texto ----------
+
+  function toggleManualTextMode() {
+    if (!(state.flow === "master" || state.flow === "inspect")) return;
+    if (!state.currentInspection || !state.currentInspection.patch) return;
+    state.manualTextMode = !state.manualTextMode;
+    state.manualStart = null;
+    state.manualCurrent = null;
+    if (!state.manualTextMode) state.manualTextOverride = null;
+    updateFlowUi(state.manualTextMode
+      ? "Arrastra un rectángulo sobre el texto. No marques el parche completo, solo el bloque de letras."
+      : undefined);
+  }
+
+  function setupManualTextPointerEvents() {
+    const canvas = dom.canvas;
+    canvas.addEventListener("pointerdown", (ev) => {
+      if (!state.manualTextMode) return;
+      ev.preventDefault();
+      const p = canvasPoint(ev);
+      state.manualStart = p;
+      state.manualCurrent = p;
+    });
+    canvas.addEventListener("pointermove", (ev) => {
+      if (!state.manualTextMode || !state.manualStart) return;
+      ev.preventDefault();
+      state.manualCurrent = canvasPoint(ev);
+    });
+    canvas.addEventListener("pointerup", (ev) => {
+      if (!state.manualTextMode || !state.manualStart) return;
+      ev.preventDefault();
+      state.manualCurrent = canvasPoint(ev);
+      const r = rectFromTwoPoints(state.manualStart, state.manualCurrent);
+      const pxPerMm = state.calibration ? state.calibration.pxPerMm : null;
+      if (pxPerMm && r.width > 8 && r.height > 5) {
+        state.manualTextOverride = r;
+        const template = extractTemplateFromRawFrame(r);
+        if (template) state.lastTextTemplateCandidate = template;
+        updateFlowUi("Texto marcado. Si el rectángulo cubre solo las letras, toca “Guardar parche bueno”.");
+      }
+      state.manualStart = null;
+      state.manualCurrent = null;
+    });
+  }
+
+  function canvasPoint(ev) {
+    const rect = dom.canvas.getBoundingClientRect();
+    return {
+      x: clamp((ev.clientX - rect.left) * dom.canvas.width / rect.width, 0, dom.canvas.width),
+      y: clamp((ev.clientY - rect.top) * dom.canvas.height / rect.height, 0, dom.canvas.height),
+    };
+  }
+
+  function rectFromTwoPoints(a, b) {
+    const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+    return { x, y, width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y) };
+  }
+
+  function textFromManualBox(r, pxPerMm) {
+    const center = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    return {
+      center,
+      widthPx: r.width,
+      heightPx: r.height,
+      widthMm: r.width / pxPerMm,
+      heightMm: r.height / pxPerMm,
+      angleDeg: 0,
+      bbox: { x: r.x, y: r.y, width: r.width, height: r.height },
+      vertices: boxPoints(center, r.width, r.height, 0),
+      confidence: 0.96,
+      method: "manual",
+    };
+  }
+
+  function bboxFromBoxText(t) {
+    const xs = t.vertices.map(p => p.x), ys = t.vertices.map(p => p.y);
+    const x = Math.min(...xs), y = Math.min(...ys);
+    return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+  }
+
+  function extractTemplateFromRawFrame(bbox) {
+    if (!bbox || !state.rawCanvas.width || !state.rawCanvas.height) return null;
+    const pad = 3;
+    const x = Math.round(clamp(bbox.x - pad, 0, state.rawCanvas.width - 1));
+    const y = Math.round(clamp(bbox.y - pad, 0, state.rawCanvas.height - 1));
+    const r = Math.round(clamp(bbox.x + bbox.width + pad, x + 3, state.rawCanvas.width));
+    const b = Math.round(clamp(bbox.y + bbox.height + pad, y + 3, state.rawCanvas.height));
+    const w = r - x, h = b - y;
+    if (w < 6 || h < 4 || w > state.rawCanvas.width * 0.80 || h > state.rawCanvas.height * 0.40) return null;
+    const img = state.rawCtx.getImageData(x, y, w, h);
+    const gray = new Uint8Array(w * h);
+    for (let i = 0, j = 0; i < img.data.length; i += 4, j++) {
+      gray[j] = Math.round(img.data[i] * 0.299 + img.data[i + 1] * 0.587 + img.data[i + 2] * 0.114);
+    }
+    return { x, y, width: w, height: h, data: Array.from(gray) };
+  }
+
+  function detectTextByTemplate(gray, patchBbox, patchRect, pxPerMm, master) {
+    if (!master || !master.template || !master.alignment || !master.text) return null;
+    const tpl = master.template;
+    if (!tpl.data || tpl.width < 6 || tpl.height < 4) return null;
+
+    const patchInfo = normalizedRectInfo(patchRect);
+    const expected = expectedTextCenterFromMaster(patchInfo, master, pxPerMm);
+    if (!expected) return null;
+
+    const tw = Math.max(6, Math.round(tpl.width));
+    const th = Math.max(4, Math.round(tpl.height));
+    const searchW = Math.max(tw * 3.8, (master.text.widthMm || 20) * pxPerMm * 2.6);
+    const searchH = Math.max(th * 5.0, (master.text.heightMm || 6) * pxPerMm * 5.2);
+    const innerPad = Math.max(5, 2.0 * pxPerMm);
+    const minX = patchBbox.x + innerPad;
+    const minY = patchBbox.y + innerPad;
+    const maxX = patchBbox.x + patchBbox.width - innerPad;
+    const maxY = patchBbox.y + patchBbox.height - innerPad;
+    const x0 = Math.round(clamp(expected.x - searchW / 2, minX, maxX - tw - 2));
+    const y0 = Math.round(clamp(expected.y - searchH / 2, minY, maxY - th - 2));
+    const x1 = Math.round(clamp(expected.x + searchW / 2, x0 + tw + 2, maxX));
+    const y1 = Math.round(clamp(expected.y + searchH / 2, y0 + th + 2, maxY));
+    const sw = x1 - x0, sh = y1 - y0;
+    if (sw <= tw + 1 || sh <= th + 1) return null;
+
+    const search = gray.roi(new cv.Rect(x0, y0, sw, sh));
+    const searchEq = new cv.Mat();
+    const templ = cv.matFromArray(th, tw, cv.CV_8UC1, tpl.data);
+    const templEq = new cv.Mat();
+    const result = new cv.Mat();
+    try {
+      cv.equalizeHist(search, searchEq);
+      cv.equalizeHist(templ, templEq);
+      cv.matchTemplate(searchEq, templEq, result, cv.TM_CCOEFF_NORMED);
+      const mm = cv.minMaxLoc(result);
+      const confidence = clamp01((mm.maxVal - 0.22) / 0.58);
+      if (mm.maxVal < 0.36) return null;
+      const rx = x0 + mm.maxLoc.x;
+      const ry = y0 + mm.maxLoc.y;
+      const center = { x: rx + tw / 2, y: ry + th / 2 };
+      return {
+        center,
+        widthPx: tw,
+        heightPx: th,
+        widthMm: tw / pxPerMm,
+        heightMm: th / pxPerMm,
+        angleDeg: patchInfo.angle + (master.alignment?.angleDeg || 0),
+        bbox: { x: rx, y: ry, width: tw, height: th },
+        vertices: boxPoints(center, tw, th, patchInfo.angle + (master.alignment?.angleDeg || 0)),
+        confidence: Math.max(0.74, confidence),
+        method: "muestra visual",
+      };
+    } finally {
+      search.delete(); searchEq.delete(); templ.delete(); templEq.delete(); result.delete();
+    }
+  }
+
   // ---------- Detección parche/texto ----------
 
   function detectPatchAndText(gray, pxPerMm, master) {
@@ -579,6 +766,8 @@
 
   function detectTextInsidePatch(gray, patchContour, patchRect, pxPerMm, master) {
     const bbox = cv.boundingRect(patchContour);
+    const templateHit = detectTextByTemplate(gray, bbox, patchRect, pxPerMm, master);
+    if (templateHit) return templateHit;
     const pad = Math.max(7, Math.round(2.6 * pxPerMm));
     const x = clamp(Math.floor(bbox.x + pad), 0, gray.cols - 1);
     const y = clamp(Math.floor(bbox.y + pad), 0, gray.rows - 1);
@@ -806,9 +995,12 @@
       patch: simplePatch(ins.patch),
       text: simpleText(ins.text),
       alignment: JSON.parse(JSON.stringify(ins.metrics)),
+      template: state.lastTextTemplateCandidate || null,
     };
     state.flow = "inspect";
     state.smoothInspection = null;
+    state.manualTextMode = false;
+    state.manualTextOverride = null;
     setMainState("INSPECCIONANDO", "ok");
     updateFlowUi("Muestra correcta guardada. Ahora coloca los parches de producción para compararlos contra esa referencia.");
   }
@@ -902,11 +1094,11 @@
       if (!inspection || !inspection.patch) {
         reason = "Coloca un parche bueno dentro del recuadro.";
       } else if (!inspection.text || !inspection.metrics) {
-        reason = "Veo el parche, pero todavía no confirmo el texto. Acerca un poco o mejora la luz.";
+        reason = "Veo el parche, pero todavía no confirmo el texto. Puedes marcarlo manualmente una vez en la muestra buena.";
       } else {
         detectionConfidence = inspection.text.confidence || 0;
         if (detectionConfidence < 0.68) {
-          reason = "Texto dudoso. Ajusta luz o distancia antes de guardar la muestra.";
+          reason = "Texto dudoso. Ajusta luz o usa “Marcar texto manual” antes de guardar la muestra.";
         } else {
           reason = "Lectura suficiente. Toca “Guardar parche bueno”.";
         }
@@ -918,7 +1110,7 @@
         reason = "Buscando el borde del parche. Acerca la prenda y evita sombras fuertes.";
       } else if (!inspection.text || !inspection.metrics) {
         verdict = "NO LEE";
-        reason = "Veo el parche, pero no confirmo el texto. No se rechaza: repite lectura.";
+        reason = "Veo el parche, pero no confirmo el texto. No se rechaza: reintenta o marca el texto manualmente.";
       } else {
         detectionConfidence = inspection.text.confidence || 0;
         comparison = compareWithMaster(inspection.metrics);
@@ -1017,8 +1209,10 @@
       drawLabel(ctx, inspection.patch.center.x + 10, inspection.patch.center.y + 16, "Centro parche");
     }
 
+    if (state.manualTextMode) drawManualSelection(ctx);
+
     if (inspection && inspection.text) {
-      drawPoly(ctx, inspection.text.vertices, "#b7791f", 3);
+      drawPoly(ctx, inspection.text.vertices, inspection.text.method === "manual" ? "#7c3aed" : "#b7791f", 3);
       drawCross(ctx, inspection.text.center.x, inspection.text.center.y, "#b7791f", 14);
       drawLabel(ctx, inspection.text.center.x + 10, inspection.text.center.y - 14, "Texto detectado");
       if (inspection.patch) {
@@ -1060,6 +1254,25 @@
     ctx.restore();
   }
 
+
+  function drawManualSelection(ctx) {
+    ctx.save();
+    ctx.fillStyle = "rgba(124,58,237,0.12)";
+    ctx.strokeStyle = "#7c3aed";
+    ctx.lineWidth = 3;
+    ctx.setLineDash([8, 5]);
+    let r = state.manualTextOverride;
+    if (state.manualStart && state.manualCurrent) r = rectFromTwoPoints(state.manualStart, state.manualCurrent);
+    if (r) {
+      ctx.fillRect(r.x, r.y, r.width, r.height);
+      ctx.strokeRect(r.x, r.y, r.width, r.height);
+      drawLabel(ctx, r.x + 8, r.y - 8, "Texto marcado por operador");
+    } else {
+      drawLabel(ctx, 22, 90, "Arrastra sobre el texto");
+    }
+    ctx.restore();
+  }
+
   function drawTopBanner(ctx, payload) {
     const text = `${payload.verdict} · ${payload.reason}`;
     ctx.save();
@@ -1085,6 +1298,9 @@
     dom.friendlyMaster.textContent = state.master ? "Guardada" : "Pendiente";
 
     dom.btnCalibrate.disabled = !(state.flow === "card" && state.liveCard && getScaleStability().ok);
+    const hasPatch = state.currentInspection && state.currentInspection.patch;
+    dom.btnMarkText.disabled = !((state.flow === "master" || state.flow === "inspect") && hasPatch);
+    dom.btnMarkText.textContent = state.manualTextMode ? "Cancelar marcado" : "Marcar texto manual";
     const canSaveMaster = state.flow === "master" && state.currentInspection && state.currentInspection.text && (state.currentInspection.text.confidence || 0) >= 0.68;
     dom.btnSaveMaster.disabled = !canSaveMaster;
 

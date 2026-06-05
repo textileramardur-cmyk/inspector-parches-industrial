@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Captura | Inspector de Parches V4</title>
+  <title>Captura | Inspector de Parches V5</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body class="page capture-page">
   <header class="topbar">
     <div>
-      <p class="eyebrow">Inspector industrial · V4 operador</p>
+      <p class="eyebrow">Inspector industrial · V5 texto asistido</p>
       <h1>Inspección guiada</h1>
     </div>
     <div class="session-pill">
@@ -52,6 +52,7 @@
         <button id="btnCamera" class="btn primary">Iniciar cámara</button>
         <button id="btnCalibrate" class="btn success" disabled>Calibrar tarjeta 7×7</button>
         <button id="btnSaveMaster" class="btn success" disabled>Guardar parche bueno</button>
+        <button id="btnMarkText" class="btn warning" disabled>Marcar texto manual</button>
         <button id="btnNewPatch" class="btn secondary">Reintentar / medir otro</button>
         <button id="btnRecalibrate" class="btn secondary">Volver a calibrar</button>
       </div>
@@ -106,7 +107,7 @@
           <div class="metric"><span>Estabilidad</span><strong id="stability">--</strong></div>
           <div class="metric"><span>Tarjeta</span><strong id="cardState">No detectada</strong></div>
         </div>
-        <p class="note">La app usa el cuadro negro interior de 5×5 cm para calcular milímetros. Evita tapar la tarjeta con el dedo; si solo la detecta con el dedo, hay reflejo o poco contraste.</p>
+        <p class="note">La app usa el cuadro negro interior de 5×5 cm para calcular milímetros. Para texto difícil, primero guarda una muestra buena; la app usará esa zona como referencia visual. Si no lo detecta, usa “Marcar texto manual” una sola vez en la muestra.</p>
       </section>
 
       <section class="panel settings-panel">
@@ -136,7 +137,7 @@
   </main>
 
   <footer class="footer-note">
-    Flujo para operador: iniciar cámara → colocar tarjeta 7×7 → calibrar → colocar parche bueno → guardar muestra → inspeccionar producción.
+    Flujo para operador: iniciar cámara → tarjeta 7×7 → calibrar → parche bueno → si no detecta el texto, marcarlo una vez → guardar muestra → inspeccionar producción.
   </footer>
 
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>

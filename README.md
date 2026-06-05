@@ -1,8 +1,8 @@
-# Inspector Industrial de Parches V4
+# Inspector Industrial de Parches V5
 
 Webapp de inspección visual para smartphone + monitor PC en vivo.
 
-## Flujo V4
+## Flujo V5
 
 1. Abrir `/captura` en el celular.
 2. Iniciar cámara.
@@ -10,17 +10,18 @@ Webapp de inspección visual para smartphone + monitor PC en vivo.
 4. Tocar **Calibrar tarjeta 7×7** cuando la app indique tarjeta lista.
 5. Retirar la tarjeta.
 6. Colocar un parche bueno.
-7. Tocar **Guardar parche bueno**.
-8. Inspeccionar parches de producción contra esa muestra.
+7. Si la app no detecta bien el texto, tocar **Marcar texto manual** y dibujar un rectángulo solo sobre las letras.
+8. Tocar **Guardar parche bueno**.
+9. Inspeccionar parches de producción contra esa muestra.
 
-## Cambios V4
+## Cambios V5
 
-- Flujo para operador normal: tarjeta → muestra buena → inspección.
-- Ya no se compara contra un centro matemático rígido, sino contra una muestra correcta.
-- Suavizado temporal para reducir brincos en pantalla.
-- Calibración más robusta: Otsu, umbrales fijos, adaptativo y bordes.
+- Agrega marcado manual del bloque de texto para entrenar la muestra buena.
+- Guarda una plantilla visual del texto de la muestra y luego la busca por coincidencia dentro de la zona esperada.
+- El texto ya no se busca “a ciegas” en todo el parche cuando existe muestra buena.
+- Mantiene el flujo para operador: tarjeta → muestra buena → inspección.
 - Si la lectura del texto es insegura, muestra **REVISAR** o **NO LEE**, no rechaza automáticamente.
-- Lenguaje menos técnico en la interfaz.
+- Mejor lenguaje de operación y soporte para casos donde el bordado/textura confunde a OpenCV.
 
 ## Render
 
