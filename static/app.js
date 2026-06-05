@@ -12,8 +12,8 @@
   };
 
   const ctx = els.canvas.getContext('2d', { willReadFrequently: true });
-  const STORAGE_KEY = 'inspector_v9_master_sample';
-  const SESSION_KEY = 'inspector_v9_session_code';
+  const STORAGE_KEY = 'inspector_v10_master_sample';
+  const SESSION_KEY = 'inspector_v10_session_code';
 
   const state = {
     cameraReady: false,
@@ -289,35 +289,84 @@
   }
 
   function detectText(img, w, h, patchRect, master) {
-    const d = img.data;
-    const padX = patchRect.w * 0.06, padY = patchRect.h * 0.08;
-    let search;
+    // V10: el texto de este tipo de parche suele vivir en la placa inferior.
+    // No lo buscamos a ciegas en todo el emblema, porque el escudo de colores genera falsos positivos.
+    let zones = [];
     let expectedRect = null;
+
     if (master && master.textNorm) {
       expectedRect = normToRect(master.textNorm, patchRect);
-      const expandX = Math.max(patchRect.w * 0.18, expectedRect.w * 0.85);
-      const expandY = Math.max(patchRect.h * 0.16, expectedRect.h * 1.25);
-      search = {
-        x: expectedRect.x - expandX,
-        y: expectedRect.y - expandY,
-        w: expectedRect.w + expandX * 2,
-        h: expectedRect.h + expandY * 2
-      };
+      const expandX = Math.max(patchRect.w * 0.22, expectedRect.w * 1.05);
+      const expandY = Math.max(patchRect.h * 0.18, expectedRect.h * 1.65);
+      zones.push({
+        name: 'zona esperada por muestra',
+        priority: 36,
+        rect: {
+          x: expectedRect.x - expandX,
+          y: expectedRect.y - expandY,
+          w: expectedRect.w + expandX * 2,
+          h: expectedRect.h + expandY * 2
+        },
+        expectedRect
+      });
     } else {
-      search = {
-        x: patchRect.x + padX,
-        y: patchRect.y + padY,
-        w: patchRect.w - padX * 2,
-        h: patchRect.h - padY * 2
-      };
+      // Primer intento: placa inferior, donde en la foto real está el texto.
+      zones.push({
+        name: 'placa inferior',
+        priority: 34,
+        rect: {
+          x: patchRect.x + patchRect.w * 0.07,
+          y: patchRect.y + patchRect.h * 0.52,
+          w: patchRect.w * 0.86,
+          h: patchRect.h * 0.40
+        },
+        preferLower: true
+      });
+      // Segundo intento: zona central baja, por si el parche queda un poco inclinado o la placa varía.
+      zones.push({
+        name: 'zona central baja',
+        priority: 24,
+        rect: {
+          x: patchRect.x + patchRect.w * 0.10,
+          y: patchRect.y + patchRect.h * 0.42,
+          w: patchRect.w * 0.80,
+          h: patchRect.h * 0.50
+        },
+        preferLower: true
+      });
+      // Último intento: interior amplio. Se usa con menos prioridad porque puede confundir detalles del escudo.
+      zones.push({
+        name: 'interior general',
+        priority: 8,
+        rect: {
+          x: patchRect.x + patchRect.w * 0.08,
+          y: patchRect.y + patchRect.h * 0.12,
+          w: patchRect.w * 0.84,
+          h: patchRect.h * 0.78
+        }
+      });
     }
-    search = clampRect(search, patchRect, w, h);
-    if (search.w < 20 || search.h < 12) return null;
+
+    let best = null;
+    for (const z of zones) {
+      const search = clampRect(z.rect, patchRect, w, h);
+      if (search.w < 24 || search.h < 10) continue;
+      const cand = findTextCandidateInZone(img, w, patchRect, search, z, expectedRect);
+      if (cand && (!best || cand.confidence > best.confidence)) best = cand;
+    }
+    return best;
+  }
+
+  function findTextCandidateInZone(img, w, patchRect, search, zone, expectedRect) {
+    const d = img.data;
+    const sw = Math.floor(search.w), sh = Math.floor(search.h);
+    if (sw < 24 || sh < 10) return null;
 
     const stats = regionStats(img, w, search);
-    const sw = Math.floor(search.w), sh = Math.floor(search.h);
     const rawMask = new Uint8Array(sw * sh);
     const gray = new Float32Array(sw * sh);
+    const localMean = stats.lum;
+    const darkThreshold = Math.max(12, Math.min(34, localMean * 0.16));
 
     for (let yy = 0; yy < sh; yy++) {
       const y = Math.floor(search.y + yy);
@@ -326,28 +375,33 @@
         const i = (y * w + x) * 4;
         const r = d[i], g = d[i + 1], b = d[i + 2];
         const lum = luma(r, g, b);
-        const cd = colorDist(r, g, b, stats.r, stats.g, stats.b);
         gray[yy * sw + xx] = lum;
-        const lumAway = Math.abs(lum - stats.lum);
-        // Multiple weak signals are better than a single dramatic threshold.
-        if (cd > 28 || lumAway > 24) rawMask[yy * sw + xx] = 1;
+        const cd = colorDist(r, g, b, stats.r, stats.g, stats.b);
+        const lumAway = Math.abs(lum - localMean);
+
+        // Señal 1: letras oscuras pequeñas sobre placa clara.
+        const darkStroke = lum < localMean - darkThreshold && lum < 158;
+        // Señal 2: letras claras u oscuras por diferencia local, útil en bordado con relieve.
+        const contrastStroke = cd > 20 || lumAway > 18;
+        if (darkStroke || (contrastStroke && lumAway > 14)) rawMask[yy * sw + xx] = 1;
       }
     }
 
-    // Add gradient edges. This helps embroidery relief without swallowing all texture.
+    // Bordes finos: ayuda cuando las letras son pequeñas y la cámara suaviza el trazo.
     for (let yy = 1; yy < sh - 1; yy++) {
       for (let xx = 1; xx < sw - 1; xx++) {
         const gx = Math.abs(gray[yy * sw + xx + 1] - gray[yy * sw + xx - 1]);
         const gy = Math.abs(gray[(yy + 1) * sw + xx] - gray[(yy - 1) * sw + xx]);
-        if ((gx + gy) > 34 && Math.abs(gray[yy * sw + xx] - stats.lum) > 10) rawMask[yy * sw + xx] = 1;
+        const gsum = gx + gy;
+        if (gsum > 24 && gray[yy * sw + xx] < localMean + 10) rawMask[yy * sw + xx] = 1;
       }
     }
 
-    // Close letters into a text block: horizontal dilation, then small cleanup.
-    dilateRect(rawMask, sw, sh, 5, 1, 2);
+    // Une letras y también dos renglones pequeños. Es intencionalmente más generoso que V9.
+    dilateRect(rawMask, sw, sh, 8, 2, 2);
     erodeRect(rawMask, sw, sh, 2, 1, 1);
 
-    const comps = components(rawMask, sw, sh, 0, 0, sw, sh, 14);
+    const comps = components(rawMask, sw, sh, 0, 0, sw, sh, 8);
     let best = null;
     for (const c of comps) {
       const rw = c.x2 - c.x1 + 1, rh = c.y2 - c.y1 + 1;
@@ -357,26 +411,39 @@
       const heightRel = rh / patchRect.h;
       const widthRel = rw / patchRect.w;
       const fill = c.area / Math.max(1, rw * rh);
-      const touchesSearch = c.x1 < 2 || c.y1 < 2 || c.x2 > sw - 3 || c.y2 > sh - 3;
+      const touchesSearch = c.x1 < 1 || c.y1 < 1 || c.x2 > sw - 2 || c.y2 > sh - 2;
       const cxNorm = (rect.x + rect.w / 2 - patchRect.x) / patchRect.w;
       const cyNorm = (rect.y + rect.h / 2 - patchRect.y) / patchRect.h;
+
       let expectedBonus = 0;
       if (expectedRect) {
         const dc = dist(rect.x + rect.w / 2, rect.y + rect.h / 2, expectedRect.x + expectedRect.w / 2, expectedRect.y + expectedRect.h / 2);
-        expectedBonus = Math.max(0, 28 - dc / Math.max(1, patchRect.w) * 100);
+        expectedBonus = Math.max(0, 34 - dc / Math.max(1, patchRect.w) * 95);
+      } else if (zone.preferLower) {
+        expectedBonus = Math.max(0, 20 - Math.abs(cxNorm - 0.5) * 14 - Math.abs(cyNorm - 0.70) * 22);
       } else {
-        expectedBonus = Math.max(0, 14 - Math.abs(cxNorm - 0.5) * 12 - Math.abs(cyNorm - 0.5) * 10);
+        expectedBonus = Math.max(0, 10 - Math.abs(cxNorm - 0.5) * 10 - Math.abs(cyNorm - 0.60) * 10);
       }
+
       let score = 0;
-      if (aspect > 1.4 && aspect < 14 && heightRel > 0.025 && heightRel < 0.32 && widthRel > 0.08 && widthRel < 0.92 && areaRel < 0.28 && !touchesSearch) {
-        score = 28 + Math.min(18, aspect * 2) + Math.min(16, widthRel * 30) + Math.min(14, heightRel * 80) + expectedBonus + Math.max(0, 12 - Math.abs(fill - 0.38) * 24);
+      // Texto pequeño real: permitir altura baja. Rechazar bloques enormes del escudo.
+      if (aspect > 1.15 && aspect < 22 && heightRel > 0.012 && heightRel < 0.22 && widthRel > 0.055 && widthRel < 0.82 && areaRel < 0.16) {
+        score = zone.priority
+          + 22
+          + Math.min(16, aspect * 1.35)
+          + Math.min(18, widthRel * 38)
+          + Math.min(12, heightRel * 120)
+          + expectedBonus
+          + Math.max(0, 10 - Math.abs(fill - 0.42) * 18)
+          - (touchesSearch ? 10 : 0);
       }
-      if (!best || score > best.score) best = { rect, score, aspect, fill, widthRel, heightRel, search, expectedRect };
+      if (!best || score > best.score) best = { rect, score, aspect, fill, widthRel, heightRel, search, expectedRect, zoneName: zone.name };
     }
-    if (!best || best.score < 45) return null;
+
+    if (!best || best.score < 43) return null;
     const contrast = textContrast(img, w, best.rect);
-    const confidence = clamp(best.score + Math.min(14, contrast / 4), 0, 100);
-    return { rect: best.rect, confidence, search, expectedRect, aspect: best.aspect, contrast };
+    const confidence = clamp(best.score + Math.min(18, contrast / 3.5), 0, 100);
+    return { rect: best.rect, confidence, search, expectedRect, aspect: best.aspect, contrast, zoneName: best.zoneName };
   }
 
   function compareToMaster(textRect, patchRect, master) {
@@ -397,7 +464,7 @@
   function decide(reading) {
     const recent = state.history.slice(-15);
     const withPatch = recent.filter(r => r.patch && r.patch.confidence >= 55);
-    const withText = recent.filter(r => r.text && r.text.confidence >= 55);
+    const withText = recent.filter(r => r.text && r.text.confidence >= 48);
     const stable = stabilityScore(recent);
     const sceneBad = reading.sceneScore < 58;
 
@@ -419,12 +486,12 @@
       title = 'NO VEO PARCHE';
       message = 'Colócalo completo dentro de la guía y deja fondo visible alrededor.';
       cls = 'state-adjust';
-    } else if (!reading.text || reading.text.confidence < 55) {
+    } else if (!reading.text || reading.text.confidence < 48) {
       result = 'NO_LEE';
       title = 'NO LEE TEXTO';
-      message = 'Veo el parche, pero no confirmo el texto. Acomoda, enfoca o mejora la luz.';
+      message = 'Veo el parche, pero el texto es pequeño o tiene poco contraste. Acerca un poco, centra y evita sombras.';
       cls = 'state-no-read';
-    } else if (withPatch.length < 8 || withText.length < 7 || stable < 65) {
+    } else if (withPatch.length < 8 || withText.length < 6 || stable < 60) {
       result = 'CONFIRMANDO';
       title = 'CONFIRMANDO';
       message = 'Mantén el parche quieto un momento.';
@@ -498,7 +565,7 @@
       setStatus('NO HAY MUESTRA', 'Todavía no tengo parche y texto estables.', 'state-adjust');
       return;
     }
-    if (decision && !['MUESTRA_LISTA', 'OK'].includes(decision.result) && candidate.text.confidence < 70) {
+    if (decision && !['MUESTRA_LISTA', 'OK'].includes(decision.result) && candidate.text.confidence < 62) {
       setStatus('MUESTRA NO SEGURA', 'Espera una lectura más estable antes de guardar.', 'state-adjust');
       return;
     }
@@ -575,7 +642,16 @@
     els.deltaX.textContent = cmp ? directionX(cmp.dx) : '--';
     els.deltaY.textContent = cmp ? directionY(cmp.dy) : '--';
     els.diagnostic.textContent = decision.message;
-    els.btnSaveMaster.disabled = !(decision.result === 'MUESTRA_LISTA' || (!state.master && reading.patch && reading.text && reading.text.confidence > 68));
+    const canSave = decision.result === 'MUESTRA_LISTA' || (!state.master && reading.patch && reading.text && reading.text.confidence > 62);
+    els.btnSaveMaster.disabled = !canSave;
+    if (!state.master) {
+      if (!reading.patch) els.btnSaveMaster.textContent = 'Esperando parche';
+      else if (!reading.text) els.btnSaveMaster.textContent = 'Esperando texto';
+      else if (!canSave) els.btnSaveMaster.textContent = 'Confirmando lectura';
+      else els.btnSaveMaster.textContent = 'Guardar muestra buena';
+    } else {
+      els.btnSaveMaster.textContent = 'Muestra guardada';
+    }
     if (!state.master && state.cameraReady) updateSteps(decision.result === 'MUESTRA_LISTA' ? 2 : 1);
   }
 
@@ -602,7 +678,7 @@
     return {
       type: 'telemetry',
       session: state.session,
-      version: '9.0.0',
+      version: '10.0.0',
       mode: state.mode,
       result: decision.result,
       title: decision.title,
