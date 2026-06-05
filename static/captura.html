@@ -9,17 +9,27 @@
 <body class="page capture-page">
   <header class="topbar">
     <div>
-      <p class="eyebrow">Inspector industrial · V2</p>
-      <h1>Captura móvil</h1>
+      <p class="eyebrow">Inspector industrial · V3 UX</p>
+      <h1>Inspección guiada</h1>
     </div>
     <div class="session-pill">
-      <span>Sesión</span>
+      <span>Código para PC</span>
       <strong id="sessionCode">---</strong>
     </div>
   </header>
 
   <main class="layout capture-layout">
     <section class="video-card">
+      <div class="wizard-strip" aria-label="Flujo de inspección">
+        <div id="stepCamera" class="wizard-step active"><span>1</span><strong>Cámara</strong><small>Iniciar</small></div>
+        <div id="stepCard" class="wizard-step"><span>2</span><strong>Tarjeta 7×7</strong><small>Calibrar</small></div>
+        <div id="stepPatch" class="wizard-step"><span>3</span><strong>Parche</strong><small>Medir</small></div>
+      </div>
+
+      <div class="operator-instruction" id="operatorInstruction">
+        Toca “Iniciar cámara”. Después la app te pedirá la tarjeta 7×7.
+      </div>
+
       <div class="video-toolbar">
         <div>
           <span class="status-dot" id="statusDot"></span>
@@ -32,78 +42,97 @@
         <video id="video" playsinline muted autoplay></video>
         <canvas id="viewCanvas"></canvas>
         <div id="cameraHint" class="camera-hint">
-          <strong>1) Inicia cámara</strong><br />
-          <span>2) Coloca la tarjeta 7×7 cm con interior negro 5×5 cm dentro de la guía.</span>
+          <strong>Paso 1: inicia la cámara</strong><br />
+          <span>Luego coloca la tarjeta física de 7×7 cm dentro del recuadro de guía.</span>
         </div>
       </div>
 
       <div class="button-row">
         <button id="btnCamera" class="btn primary">Iniciar cámara</button>
-        <button id="btnCalibrate" class="btn success" disabled>Calibrar 7×7</button>
-        <button id="btnRecalibrate" class="btn secondary">Recalibrar</button>
+        <button id="btnCalibrate" class="btn success" disabled>Ya puse la tarjeta · Calibrar</button>
+        <button id="btnNewPatch" class="btn secondary">Medir otro parche</button>
+        <button id="btnRecalibrate" class="btn secondary">Volver a calibrar</button>
       </div>
     </section>
 
     <aside class="panel-stack">
-      <section class="panel">
-        <h2>Calibración</h2>
-        <div class="metric-grid two">
-          <div class="metric"><span>Escala actual</span><strong id="liveScale">--</strong></div>
-          <div class="metric"><span>Escala bloqueada</span><strong id="lockedScale">--</strong></div>
-          <div class="metric"><span>Estabilidad</span><strong id="stability">--</strong></div>
-          <div class="metric"><span>Patrón</span><strong id="cardState">No detectado</strong></div>
-        </div>
-        <p class="note">La escala se registra con el cuadro negro interior de 5×5 cm y se valida contra la tarjeta física de 7×7 cm.</p>
+      <section class="panel action-panel">
+        <h2>Qué hacer ahora</h2>
+        <p id="nextAction" class="next-action">Inicia la cámara del celular.</p>
+        <div class="friendly-status"><span>Tarjeta:</span><strong id="friendlyCard">No detectada</strong></div>
+        <div class="friendly-status"><span>Escala:</span><strong id="friendlyScale">Sin calibrar</strong></div>
+        <div class="friendly-status"><span>Texto:</span><strong id="friendlyText">Pendiente</strong></div>
       </section>
 
       <section class="panel result-panel">
-        <h2>Dictamen</h2>
-        <div class="verdict" id="verdict">INESTABLE</div>
-        <div class="score-line"><span>Score</span><strong id="scoreValue">--%</strong></div>
+        <h2>Resultado</h2>
+        <div class="verdict" id="verdict">ESPERA</div>
+        <div class="score-line"><span>Confianza</span><strong id="scoreValue">--%</strong></div>
+        <p class="note" id="reasonText">Todavía no hay una inspección válida.</p>
       </section>
 
       <section class="panel">
-        <h2>Medición en vivo</h2>
+        <h2>Medición que entiende cualquiera</h2>
         <div class="metric-grid three">
-          <div class="metric"><span>ΔX</span><strong id="dxValue">--</strong></div>
-          <div class="metric"><span>ΔY</span><strong id="dyValue">--</strong></div>
-          <div class="metric"><span>Ángulo</span><strong id="angleValue">--</strong></div>
+          <div class="metric"><span>Texto izquierda/derecha</span><strong id="dxValue">--</strong></div>
+          <div class="metric"><span>Texto arriba/abajo</span><strong id="dyValue">--</strong></div>
+          <div class="metric"><span>Texto inclinado</span><strong id="angleValue">--</strong></div>
         </div>
         <div class="metric-grid two compact">
-          <div class="metric"><span>Parche</span><strong id="patchSize">--</strong></div>
-          <div class="metric"><span>Texto</span><strong id="textSize">--</strong></div>
+          <div class="metric"><span>Tamaño del parche</span><strong id="patchSize">--</strong></div>
+          <div class="metric"><span>Tamaño del texto</span><strong id="textSize">--</strong></div>
         </div>
       </section>
 
       <section class="panel">
-        <h2>Distancia texto-borde</h2>
+        <h2>Distancia del texto a cada borde</h2>
         <div class="edge-grid">
-          <div><span>Izq.</span><strong id="edgeLeft">--</strong></div>
-          <div><span>Der.</span><strong id="edgeRight">--</strong></div>
-          <div><span>Sup.</span><strong id="edgeTop">--</strong></div>
-          <div><span>Inf.</span><strong id="edgeBottom">--</strong></div>
+          <div><span>Izquierda</span><strong id="edgeLeft">--</strong></div>
+          <div><span>Derecha</span><strong id="edgeRight">--</strong></div>
+          <div><span>Arriba</span><strong id="edgeTop">--</strong></div>
+          <div><span>Abajo</span><strong id="edgeBottom">--</strong></div>
         </div>
       </section>
 
-      <section class="panel">
-        <h2>Tolerancias</h2>
-        <label class="control-label">Offset X máximo <span id="tolXLabel">3.0 mm</span></label>
-        <input id="tolX" type="range" min="0.5" max="10" step="0.5" value="3" />
+      <section class="panel calibration-panel">
+        <h2>Calibración</h2>
+        <div class="metric-grid two">
+          <div class="metric"><span>Lectura actual</span><strong id="liveScale">--</strong></div>
+          <div class="metric"><span>Escala guardada</span><strong id="lockedScale">--</strong></div>
+          <div class="metric"><span>Estabilidad</span><strong id="stability">--</strong></div>
+          <div class="metric"><span>Tarjeta</span><strong id="cardState">No detectada</strong></div>
+        </div>
+        <p class="note">La app usa el cuadro negro interior de 5×5 cm para calcular milímetros. El exterior 7×7 sirve como guía visual y validación práctica.</p>
+      </section>
 
-        <label class="control-label">Offset Y máximo <span id="tolYLabel">3.0 mm</span></label>
-        <input id="tolY" type="range" min="0.5" max="10" step="0.5" value="3" />
+      <section class="panel settings-panel">
+        <h2>Configuración simple</h2>
+        <label class="control-label">Nivel de exigencia</label>
+        <select id="precisionPreset" class="select-control">
+          <option value="normal" selected>Normal · recomendado</option>
+          <option value="strict">Estricto · más fino</option>
+          <option value="loose">Flexible · más tolerante</option>
+        </select>
+        <details class="advanced-settings">
+          <summary>Ajustes avanzados</summary>
+          <label class="control-label">Máximo que puede moverse a los lados <span id="tolXLabel">3.0 mm</span></label>
+          <input id="tolX" type="range" min="0.5" max="10" step="0.5" value="3" />
 
-        <label class="control-label">Ángulo máximo <span id="tolAngleLabel">5°</span></label>
-        <input id="tolAngle" type="range" min="1" max="15" step="1" value="5" />
+          <label class="control-label">Máximo que puede subir o bajar <span id="tolYLabel">3.0 mm</span></label>
+          <input id="tolY" type="range" min="0.5" max="10" step="0.5" value="3" />
 
-        <label class="control-label">Score mínimo <span id="scoreMinLabel">85%</span></label>
-        <input id="scoreMin" type="range" min="50" max="100" step="1" value="85" />
+          <label class="control-label">Máxima inclinación permitida <span id="tolAngleLabel">5°</span></label>
+          <input id="tolAngle" type="range" min="1" max="15" step="1" value="5" />
+
+          <label class="control-label">Mínimo de aceptación <span id="scoreMinLabel">85%</span></label>
+          <input id="scoreMin" type="range" min="50" max="100" step="1" value="85" />
+        </details>
       </section>
     </aside>
   </main>
 
   <footer class="footer-note">
-    Flujo correcto: cámara fija → tarjeta visible → calibrar → inspeccionar parche. Si se mueve el celular, recalibra.
+    Flujo para operador: iniciar cámara → colocar tarjeta → calibrar → retirar tarjeta → colocar parche → leer resultado.
   </footer>
 
   <script async src="https://docs.opencv.org/4.x/opencv.js"></script>

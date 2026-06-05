@@ -2,6 +2,7 @@
   --bg: #f5f7fb;
   --surface: #ffffff;
   --surface-2: #eef3f9;
+  --surface-3: #f9fbfe;
   --ink: #102033;
   --muted: #687789;
   --line: #d9e2ec;
@@ -44,7 +45,7 @@ h1 { margin: 0; font-size: clamp(24px, 4vw, 38px); }
 h2 { margin: 0 0 14px 0; font-size: 18px; }
 
 .layout { max-width: 1440px; margin: 0 auto; display: grid; gap: 18px; }
-.capture-layout { grid-template-columns: minmax(0, 1fr) 420px; align-items: start; }
+.capture-layout { grid-template-columns: minmax(0, 1fr) 430px; align-items: start; }
 .monitor-layout { grid-template-columns: 1.1fr 420px; align-items: start; }
 
 .video-card, .panel {
@@ -54,12 +55,62 @@ h2 { margin: 0 0 14px 0; font-size: 18px; }
   box-shadow: var(--shadow);
 }
 .video-card { overflow: hidden; }
+
+.wizard-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-3);
+}
+.wizard-step {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 9px;
+  row-gap: 2px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  opacity: .72;
+}
+.wizard-step span {
+  grid-row: span 2;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 900;
+}
+.wizard-step strong { font-size: 14px; }
+.wizard-step small { color: var(--muted); font-weight: 700; }
+.wizard-step.active { opacity: 1; border-color: #9fc0ff; background: #f6f9ff; }
+.wizard-step.active span { background: var(--brand); color: #fff; }
+.wizard-step.done { opacity: 1; border-color: #b7e1cf; background: #f1fbf7; }
+.wizard-step.done span { background: var(--ok); color: #fff; }
+
+.operator-instruction {
+  margin: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #fff9eb;
+  border: 1px solid #f1d9a2;
+  color: #68470a;
+  font-weight: 850;
+  line-height: 1.35;
+}
 .video-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   padding: 14px 16px;
+  border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
 }
 .viewer-wrap {
@@ -74,7 +125,7 @@ h2 { margin: 0 0 14px 0; font-size: 18px; }
   display: block;
   width: 100%;
   height: auto;
-  max-height: calc(100vh - 260px);
+  max-height: calc(100vh - 310px);
   object-fit: contain;
   background: #e9eef6;
 }
@@ -89,7 +140,7 @@ h2 { margin: 0 0 14px 0; font-size: 18px; }
   border: 2px dashed #9fb2c8;
   border-radius: 18px;
   color: #43546a;
-  background: rgba(255,255,255,0.72);
+  background: rgba(255,255,255,0.78);
   padding: 20px;
 }
 .button-row { display: flex; gap: 10px; flex-wrap: wrap; padding: 14px 16px; border-top: 1px solid var(--line); }
@@ -98,7 +149,7 @@ h2 { margin: 0 0 14px 0; font-size: 18px; }
   border: 1px solid transparent;
   border-radius: 12px;
   padding: 11px 14px;
-  font-weight: 800;
+  font-weight: 850;
   cursor: pointer;
   color: var(--ink);
   background: var(--surface-2);
@@ -123,6 +174,22 @@ h2 { margin: 0 0 14px 0; font-size: 18px; }
 
 .panel-stack { display: grid; gap: 14px; }
 .panel { padding: 16px; }
+.action-panel { border-color: #bdd6ff; }
+.next-action {
+  margin: 0 0 12px 0;
+  font-size: 18px;
+  line-height: 1.35;
+  font-weight: 850;
+}
+.friendly-status {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.friendly-status span { color: var(--muted); font-weight: 800; }
+.friendly-status strong { text-align: right; }
 .metric-grid { display: grid; gap: 10px; }
 .metric-grid.two { grid-template-columns: 1fr 1fr; }
 .metric-grid.three { grid-template-columns: repeat(3, 1fr); }
@@ -134,8 +201,14 @@ h2 { margin: 0 0 14px 0; font-size: 18px; }
   padding: 12px;
   min-width: 0;
 }
-.metric span, .edge-grid span, .score-line span, .small-muted { color: var(--muted); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
-.metric strong { display: block; margin-top: 5px; font-size: clamp(17px, 3vw, 25px); white-space: nowrap; }
+.metric span, .edge-grid span, .score-line span, .small-muted {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.metric strong { display: block; margin-top: 5px; font-size: clamp(16px, 3vw, 24px); white-space: nowrap; }
 .note { margin: 12px 0 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
 
 .status-dot {
@@ -152,7 +225,7 @@ h2 { margin: 0 0 14px 0; font-size: 18px; }
 .status-dot.unstable { background: var(--unstable); }
 
 .verdict, .monitor-verdict {
-  font-size: clamp(32px, 7vw, 58px);
+  font-size: clamp(32px, 7vw, 56px);
   font-weight: 950;
   letter-spacing: .02em;
   color: var(--unstable);
@@ -181,7 +254,7 @@ h2 { margin: 0 0 14px 0; font-size: 18px; }
   border-radius: 14px;
   padding: 12px;
 }
-.edge-grid strong { display: block; margin-top: 6px; font-size: 20px; }
+.edge-grid strong { display: block; margin-top: 6px; font-size: 19px; }
 .control-label {
   display: flex;
   justify-content: space-between;
@@ -189,6 +262,22 @@ h2 { margin: 0 0 14px 0; font-size: 18px; }
   font-size: 14px;
   font-weight: 800;
   margin-top: 12px;
+}
+.select-control {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 16px;
+  font-weight: 800;
+}
+.advanced-settings { margin-top: 12px; }
+.advanced-settings summary {
+  cursor: pointer;
+  color: var(--brand);
+  font-weight: 850;
 }
 input[type="range"] { width: 100%; accent-color: var(--brand); }
 .footer-note { max-width: 1440px; margin: 14px auto 0 auto; color: var(--muted); font-size: 13px; }
@@ -273,6 +362,7 @@ input[type="range"] { width: 100%; accent-color: var(--brand); }
 @media (max-width: 620px) {
   .topbar { flex-direction: column; }
   .session-pill { text-align: left; }
+  .wizard-strip { grid-template-columns: 1fr; }
   .metric-grid.two, .metric-grid.three, .edge-grid { grid-template-columns: 1fr 1fr; }
   .button-row .btn { flex: 1 1 100%; }
 }

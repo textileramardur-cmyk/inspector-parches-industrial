@@ -7,6 +7,7 @@
     connection: $("monitorConnection"),
     verdict: $("monitorVerdict"),
     score: $("monitorScore"),
+    reason: $("monitorReason"),
     canvas: $("schemaCanvas"),
     dx: $("mDx"),
     dy: $("mDy"),
@@ -79,13 +80,14 @@
     dom.verdict.textContent = payload.verdict || "SIN DATOS";
     dom.verdict.className = "monitor-verdict " + verdictClass(payload.verdict);
     dom.score.textContent = Number.isFinite(payload.score) ? `${payload.score}%` : "--";
+    dom.reason.textContent = payload.reason || "Esperando lectura del celular.";
   }
 
   function updateMetrics(payload) {
     const m = payload.measurements;
     const a = m && m.alignment ? m.alignment : null;
-    dom.dx.textContent = a ? fmtMmSigned(a.offsetXmm) : "--";
-    dom.dy.textContent = a ? fmtMmSigned(a.offsetYmm) : "--";
+    dom.dx.textContent = a ? friendlyOffsetX(a.offsetXmm) : "--";
+    dom.dy.textContent = a ? friendlyOffsetY(a.offsetYmm) : "--";
     dom.angle.textContent = a ? `${a.angleDeg.toFixed(1)}°` : "--";
     dom.left.textContent = a ? fmtMm(a.edges.left) : "--";
     dom.right.textContent = a ? fmtMm(a.edges.right) : "--";
@@ -108,7 +110,7 @@
 
     const m = payload.measurements;
     if (!m || !m.patch) {
-      drawCenteredText("Esperando medición del celular…", "#687789");
+      drawCenteredText(payload.reason || "Esperando medición del celular…", "#687789");
       return;
     }
 
@@ -169,7 +171,6 @@
     }
 
     ctx.restore();
-
     drawLegend(payload);
   }
 
@@ -179,18 +180,18 @@
     ctx.save();
     ctx.fillStyle = "rgba(255,255,255,0.92)";
     ctx.strokeStyle = "#d9e2ec";
-    roundRect(ctx, 18, 18, 300, 120, 14);
+    roundRect(ctx, 18, 18, 360, 128, 14);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = "#102033";
     ctx.font = "800 17px system-ui";
-    ctx.fillText(payload.reason || "Medición", 34, 48);
+    ctx.fillText((payload.reason || "Medición").substring(0, 42), 34, 48);
     ctx.font = "700 14px system-ui";
     ctx.fillStyle = "#687789";
     ctx.fillText(`Parche: ${m.patch.widthMm.toFixed(1)} × ${m.patch.heightMm.toFixed(1)} mm`, 34, 75);
     if (a) {
-      ctx.fillText(`Centro: X ${fmtMmSigned(a.offsetXmm)} / Y ${fmtMmSigned(a.offsetYmm)}`, 34, 98);
-      ctx.fillText(`Ángulo: ${a.angleDeg.toFixed(1)}°`, 34, 121);
+      ctx.fillText(`Horizontal: ${friendlyOffsetX(a.offsetXmm)}`, 34, 98);
+      ctx.fillText(`Vertical: ${friendlyOffsetY(a.offsetYmm)} · Inclinación: ${a.angleDeg.toFixed(1)}°`, 34, 121);
     }
     ctx.restore();
   }
@@ -199,7 +200,7 @@
     ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
     ctx.fillStyle = "#fbfdff";
     ctx.fillRect(0, 0, dom.canvas.width, dom.canvas.height);
-    drawCenteredText("Introduce el código del celular para recibir telemetría", "#687789");
+    drawCenteredText("Introduce el código del celular para recibir medición", "#687789");
   }
 
   function drawCenteredText(text, color) {
@@ -218,7 +219,7 @@
       time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
       verdict: payload.verdict,
       score: Number.isFinite(payload.score) ? `${payload.score}%` : "--",
-      center: a ? `${fmtMmSigned(a.offsetXmm)} / ${fmtMmSigned(a.offsetYmm)}` : "--",
+      center: a ? `${friendlyOffsetX(a.offsetXmm)} / ${friendlyOffsetY(a.offsetYmm)}` : "--",
     };
     state.log.unshift(row);
     state.log = state.log.slice(0, 12);
@@ -248,8 +249,17 @@
     ctx.closePath();
   }
 
+  function friendlyOffsetX(mm) {
+    if (!Number.isFinite(mm)) return "--";
+    if (Math.abs(mm) < 0.15) return "Centrado";
+    return `${Math.abs(mm).toFixed(1)} mm ${mm > 0 ? "derecha" : "izquierda"}`;
+  }
+  function friendlyOffsetY(mm) {
+    if (!Number.isFinite(mm)) return "--";
+    if (Math.abs(mm) < 0.15) return "Centrado";
+    return `${Math.abs(mm).toFixed(1)} mm ${mm > 0 ? "abajo" : "arriba"}`;
+  }
   function fmtMm(v) { return Number.isFinite(v) ? `${v.toFixed(1)} mm` : "--"; }
-  function fmtMmSigned(v) { return Number.isFinite(v) ? `${v >= 0 ? "+" : ""}${v.toFixed(1)} mm` : "--"; }
   function verdictClass(v) { return v === "OK" ? "ok" : v === "MAL" ? "bad" : "unstable"; }
   function degToRad(deg) { return deg * Math.PI / 180; }
 })();

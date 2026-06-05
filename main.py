@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-app = FastAPI(title="Inspector Industrial de Parches", version="2.0.0")
+app = FastAPI(title="Inspector Industrial de Parches", version="3.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,7 +38,7 @@ class SessionHub:
         self.monitors: dict[str, set[WebSocket]] = defaultdict(set)
         self.captures: dict[str, set[WebSocket]] = defaultdict(set)
         self.last_payload: dict[str, dict] = {}
-        self.history: dict[str, Deque[dict]] = defaultdict(lambda: deque(maxlen=50))
+        self.history: dict[str, Deque[dict]] = defaultdict(lambda: deque(maxlen=80))
 
     async def connect(self, session: str, role: str, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -83,7 +83,7 @@ hub = SessionHub()
 
 @app.get("/health")
 def health() -> JSONResponse:
-    return JSONResponse({"ok": True, "service": "inspector-parches-industrial", "version": "2.0.0"})
+    return JSONResponse({"ok": True, "service": "inspector-parches-industrial", "version": "3.0.0"})
 
 
 @app.get("/")
@@ -128,7 +128,6 @@ async def websocket_endpoint(websocket: WebSocket, session: str, role: str) -> N
                 except json.JSONDecodeError:
                     await websocket.send_text(json.dumps({"type": "error", "message": "JSON inválido"}))
             else:
-                # El monitor puede mandar ping o solicitar último estado.
                 if raw.strip().lower() in {"ping", "last"} and session in hub.last_payload:
                     await hub.safe_send(websocket, hub.last_payload[session])
     except WebSocketDisconnect:
