@@ -1,29 +1,44 @@
-# Inspector Industrial de Parches V5
+# Inspector Industrial de Parches V6
 
-Webapp de inspección visual para smartphone + monitor PC en vivo.
+Webapp para inspección visual guiada de parches bordados sobre prendas de tejido de punto.
 
-## Flujo V5
+## Cambio clave de V6
+
+La tarjeta 7×7 deja de ser obligatoria en el flujo normal. Ahora el sistema trabaja con una **muestra maestra**:
+
+1. Fijas el celular.
+2. Colocas un parche correcto.
+3. Marcas el contorno del parche.
+4. Marcas el bloque de texto.
+5. Guardas la muestra maestra.
+6. Inspeccionas producción comparando contra esa muestra.
+
+La tarjeta 7×7 / 5×5 queda como calibración opcional de supervisor para obtener medidas reales en milímetros.
+
+## Rutas
+
+- `/captura`: celular.
+- `/monitor`: PC.
+- `/health`: estado del servicio.
+
+## Flujo para operador
 
 1. Abrir `/captura` en el celular.
-2. Iniciar cámara.
-3. Colocar tarjeta física 7×7 cm con cuadro negro interior 5×5 cm.
-4. Tocar **Calibrar tarjeta 7×7** cuando la app indique tarjeta lista.
-5. Retirar la tarjeta.
-6. Colocar un parche bueno.
-7. Si la app no detecta bien el texto, tocar **Marcar texto manual** y dibujar un rectángulo solo sobre las letras.
-8. Tocar **Guardar parche bueno**.
-9. Inspeccionar parches de producción contra esa muestra.
+2. Tocar **Iniciar cámara**.
+3. Colocar un parche correcto.
+4. Tocar **1 · Marcar parche bueno** y dibujar alrededor de todo el parche.
+5. Tocar **2 · Marcar texto bueno** y dibujar solo sobre las letras.
+6. Tocar **3 · Guardar muestra maestra**.
+7. Tocar **Inspeccionar producción**.
+8. Colocar cada parche dentro de la guía azul.
 
-## Cambios V5
+## Flujo para PC
 
-- Agrega marcado manual del bloque de texto para entrenar la muestra buena.
-- Guarda una plantilla visual del texto de la muestra y luego la busca por coincidencia dentro de la zona esperada.
-- El texto ya no se busca “a ciegas” en todo el parche cuando existe muestra buena.
-- Mantiene el flujo para operador: tarjeta → muestra buena → inspección.
-- Si la lectura del texto es insegura, muestra **REVISAR** o **NO LEE**, no rechaza automáticamente.
-- Mejor lenguaje de operación y soporte para casos donde el bordado/textura confunde a OpenCV.
+1. Abrir `/monitor`.
+2. Escribir el código de 3 letras y 3 números que aparece en el celular.
+3. Ver resultado en vivo.
 
-## Render
+## Despliegue Render
 
 Build command:
 
@@ -37,8 +52,21 @@ Start command:
 uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
 
-## Rutas
+## Notas técnicas
 
-- `/captura` para el celular.
-- `/monitor` para la PC.
-- `/health` para revisar servicio.
+- El análisis visual corre en el navegador del celular con OpenCV.js.
+- El backend FastAPI solo retransmite métricas por WebSocket.
+- La imagen no se manda al servidor.
+- La detección del texto se basa en plantilla visual marcada en la muestra buena.
+- El suavizado temporal reduce saltos de lectura.
+- Si la seguridad de lectura es baja, el sistema muestra **NO LEE** o **REVISAR**, no rechaza automáticamente.
+
+## Recomendación física
+
+Para mejores resultados:
+
+- Celular fijo en soporte.
+- Luz constante y pareja.
+- Prenda siempre en la misma zona.
+- Fondo sin sombras fuertes.
+- Crear una muestra maestra por tipo de parche/texto.

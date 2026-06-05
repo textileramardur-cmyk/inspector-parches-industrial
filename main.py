@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-app = FastAPI(title="Inspector Industrial de Parches", version="4.0.0")
+app = FastAPI(title="Inspector Industrial de Parches", version="6.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,30 +28,29 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 class SessionHub:
-    """Orquestador simple de sesiones en memoria.
+    """Retransmisor de telemetría.
 
-    El celular NO transmite video. Solo manda telemetría JSON.
-    Render/FastAPI retransmite esa telemetría a los monitores conectados.
+    El celular analiza localmente. El servidor solo coordina sesiones y manda
+    métricas al monitor de PC. Nada de video al backend, porque tampoco hace
+    falta convertir Render en una freidora de frames.
     """
 
     def __init__(self) -> None:
         self.monitors: dict[str, set[WebSocket]] = defaultdict(set)
         self.captures: dict[str, set[WebSocket]] = defaultdict(set)
         self.last_payload: dict[str, dict] = {}
-        self.history: dict[str, Deque[dict]] = defaultdict(lambda: deque(maxlen=80))
+        self.history: dict[str, Deque[dict]] = defaultdict(lambda: deque(maxlen=100))
 
     async def connect(self, session: str, role: str, websocket: WebSocket) -> None:
         await websocket.accept()
-        if role == "monitor":
-            self.monitors[session].add(websocket)
-            if session in self.last_payload:
-                await self.safe_send(websocket, self.last_payload[session])
-        else:
-            self.captures[session].add(websocket)
+        bucket = self.monitors if role == "monitor" else self.captures
+        bucket[session].add(websocket)
+        if role == "monitor" and session in self.last_payload:
+            await self.safe_send(websocket, self.last_payload[session])
 
     def disconnect(self, session: str, role: str, websocket: WebSocket) -> None:
         bucket = self.monitors if role == "monitor" else self.captures
-        if session in bucket and websocket in bucket[session]:
+        if websocket in bucket.get(session, set()):
             bucket[session].remove(websocket)
         if session in bucket and not bucket[session]:
             del bucket[session]
@@ -67,13 +66,10 @@ class SessionHub:
         payload["server_ts"] = time.time()
         self.last_payload[session] = payload
         self.history[session].append(payload)
-
         dead: list[WebSocket] = []
         for monitor in list(self.monitors.get(session, set())):
-            ok = await self.safe_send(monitor, payload)
-            if not ok:
+            if not await self.safe_send(monitor, payload):
                 dead.append(monitor)
-
         for ws in dead:
             self.monitors[session].discard(ws)
 
@@ -83,7 +79,7 @@ hub = SessionHub()
 
 @app.get("/health")
 def health() -> JSONResponse:
-    return JSONResponse({"ok": True, "service": "inspector-parches-industrial", "version": "4.0.0"})
+    return JSONResponse({"ok": True, "service": "inspector-parches-industrial", "version": "6.0.0"})
 
 
 @app.get("/")
@@ -110,7 +106,6 @@ def monitor() -> FileResponse:
 async def websocket_endpoint(websocket: WebSocket, session: str, role: str) -> None:
     session = session.upper().strip()
     role = role.lower().strip()
-
     if role not in {"capture", "monitor"}:
         await websocket.close(code=1008)
         return
@@ -126,7 +121,7 @@ async def websocket_endpoint(websocket: WebSocket, session: str, role: str) -> N
                     payload["role"] = "capture"
                     await hub.publish(session, payload)
                 except json.JSONDecodeError:
-                    await websocket.send_text(json.dumps({"type": "error", "message": "JSON inválido"}))
+                    await websocket.send_text(json.dumps({"type": "error", "message": "JSON inválido"}, ensure_ascii=False))
             else:
                 if raw.strip().lower() in {"ping", "last"} and session in hub.last_payload:
                     await hub.safe_send(websocket, hub.last_payload[session])

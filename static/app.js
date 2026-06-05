@@ -7,226 +7,160 @@
     hint: $("cameraHint"),
     sessionCode: $("sessionCode"),
     btnCamera: $("btnCamera"),
-    btnCalibrate: $("btnCalibrate"),
-    btnSaveMaster: $("btnSaveMaster"),
+    btnMarkPatch: $("btnMarkPatch"),
     btnMarkText: $("btnMarkText"),
-    btnNewPatch: $("btnNewPatch"),
-    btnRecalibrate: $("btnRecalibrate"),
+    btnSaveMaster: $("btnSaveMaster"),
+    btnStartInspect: $("btnStartInspect"),
+    btnFreeze: $("btnFreeze"),
+    btnNewMaster: $("btnNewMaster"),
+    btnClearMaster: $("btnClearMaster"),
+    btnUsePatchScale: $("btnUsePatchScale"),
+    btnCalibrateCard: $("btnCalibrateCard"),
     mainState: $("mainState"),
     statusDot: $("statusDot"),
     opencvState: $("opencvState"),
     operatorInstruction: $("operatorInstruction"),
     nextAction: $("nextAction"),
     stepCamera: $("stepCamera"),
-    stepCard: $("stepCard"),
     stepMaster: $("stepMaster"),
-    stepPatch: $("stepPatch"),
-    friendlyCard: $("friendlyCard"),
-    friendlyScale: $("friendlyScale"),
-    friendlyMaster: $("friendlyMaster"),
+    stepInspect: $("stepInspect"),
+    friendlyPatch: $("friendlyPatch"),
     friendlyText: $("friendlyText"),
-    liveScale: $("liveScale"),
-    lockedScale: $("lockedScale"),
-    stability: $("stability"),
-    cardState: $("cardState"),
+    friendlyMaster: $("friendlyMaster"),
+    friendlyScale: $("friendlyScale"),
     verdict: $("verdict"),
-    scoreValue: $("scoreValue"),
+    qualityValue: $("qualityValue"),
     readConfidence: $("readConfidence"),
     reasonText: $("reasonText"),
     dxValue: $("dxValue"),
     dyValue: $("dyValue"),
-    angleValue: $("angleValue"),
+    visualMatch: $("visualMatch"),
     patchSize: $("patchSize"),
     textSize: $("textSize"),
-    edgeLeft: $("edgeLeft"),
-    edgeRight: $("edgeRight"),
-    edgeTop: $("edgeTop"),
-    edgeBottom: $("edgeBottom"),
     precisionPreset: $("precisionPreset"),
+    patchRealW: $("patchRealW"),
+    patchRealH: $("patchRealH"),
+    lockedScale: $("lockedScale"),
     tolX: $("tolX"),
     tolY: $("tolY"),
-    tolAngle: $("tolAngle"),
     scoreMin: $("scoreMin"),
+    confMin: $("confMin"),
     tolXLabel: $("tolXLabel"),
     tolYLabel: $("tolYLabel"),
-    tolAngleLabel: $("tolAngleLabel"),
     scoreMinLabel: $("scoreMinLabel"),
+    confMinLabel: $("confMinLabel"),
   };
 
   const ctx = dom.canvas.getContext("2d", { alpha: false });
 
   const state = {
-    version: "5.0.0",
+    version: "6.0.0",
+    session: getOrCreateSessionCode(),
     cvReady: false,
     cameraRunning: false,
-    processing: false,
-    flow: "camera", // camera | card | master | inspect
-    session: getOrCreateSessionCode(),
+    frozen: false,
+    flow: "camera", // camera | master | inspect
     ws: null,
     wsConnected: false,
-    frameId: null,
     frameCounter: 0,
     lastSentAt: 0,
-    liveCard: null,
-    smoothCard: null,
-    scaleSamples: [],
-    calibration: null,
-    master: null,
-    currentInspection: null,
-    smoothInspection: null,
-    lastValidInspectionAt: 0,
-    payloadHistory: [],
-    lastPayload: null,
     rawCanvas: document.createElement("canvas"),
     rawCtx: null,
-    manualTextMode: false,
-    manualStart: null,
-    manualCurrent: null,
-    manualTextOverride: null,
-    lastTextTemplateCandidate: null,
+    markingMode: null, // patch | text | null
+    markStart: null,
+    markCurrent: null,
+    patchCandidate: null,
+    textCandidate: null,
+    master: null,
+    template: null,
+    lastInspection: null,
+    smoothInspection: null,
+    lastGoodInspectionAt: 0,
+    pxPerMm: null,
+    scaleSource: "Sin mm",
   };
 
   state.rawCtx = state.rawCanvas.getContext("2d", { alpha: false });
   dom.sessionCode.textContent = state.session;
+
   setupControls();
-  updateFlowUi();
+  setupPointerMarking();
+  loadMasterFromStorage();
   waitForOpenCv();
   connectWebSocket();
+  updateUi();
 
   function getOrCreateSessionCode() {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ";
     let code = "";
     for (let i = 0; i < 3; i++) code += chars[Math.floor(Math.random() * chars.length)];
-    code += String(Math.floor(100 + Math.random() * 900));
-    return code;
+    return code + String(Math.floor(100 + Math.random() * 900));
   }
 
   function setupControls() {
     dom.btnCamera.addEventListener("click", startCamera);
-    dom.btnCalibrate.addEventListener("click", lockCalibration);
-    dom.btnSaveMaster.addEventListener("click", saveMasterPatch);
-    dom.btnMarkText.addEventListener("click", toggleManualTextMode);
-    setupManualTextPointerEvents();
-    dom.btnNewPatch.addEventListener("click", () => {
-      if (state.calibration && state.master) {
-        state.flow = "inspect";
-        state.smoothInspection = null;
-        state.manualTextOverride = null;
-        state.manualTextMode = false;
-        updateFlowUi("Coloca el parche dentro del recuadro. Espera a que la lectura se estabilice.");
-      } else if (state.calibration) {
-        state.flow = "master";
-        updateFlowUi("Coloca un parche bueno para guardarlo como muestra correcta.");
-      }
-    });
-    dom.btnRecalibrate.addEventListener("click", () => {
-      state.calibration = null;
-      state.master = null;
-      state.scaleSamples = [];
-      state.smoothCard = null;
-      state.smoothInspection = null;
-      state.currentInspection = null;
-      state.manualTextMode = false;
-      state.manualTextOverride = null;
-      state.lastTextTemplateCandidate = null;
-      state.flow = state.cameraRunning ? "card" : "camera";
-      dom.lockedScale.textContent = "--";
-      setMainState(state.cameraRunning ? "COLOCA TARJETA" : "SIN CÁMARA", state.cameraRunning ? "warn" : "unstable");
-      updateFlowUi();
-    });
-
+    dom.btnMarkPatch.addEventListener("click", () => startMarking("patch"));
+    dom.btnMarkText.addEventListener("click", () => startMarking("text"));
+    dom.btnSaveMaster.addEventListener("click", saveMaster);
+    dom.btnStartInspect.addEventListener("click", startInspect);
+    dom.btnFreeze.addEventListener("click", toggleFreeze);
+    dom.btnNewMaster.addEventListener("click", newMaster);
+    dom.btnClearMaster.addEventListener("click", clearMaster);
+    dom.btnUsePatchScale.addEventListener("click", usePatchAsScale);
+    dom.btnCalibrateCard.addEventListener("click", calibrateWithCard);
     dom.precisionPreset.addEventListener("change", applyPreset);
-    [dom.tolX, dom.tolY, dom.tolAngle, dom.scoreMin].forEach((input) => {
-      input.addEventListener("input", updateToleranceLabels);
-    });
+    [dom.tolX, dom.tolY, dom.scoreMin, dom.confMin].forEach((el) => el.addEventListener("input", updateToleranceLabels));
     applyPreset();
   }
 
   function applyPreset() {
     const preset = dom.precisionPreset.value;
     const values = {
-      strict: { x: 2, y: 2, a: 3, s: 90 },
-      normal: { x: 3, y: 3, a: 5, s: 85 },
-      loose: { x: 5, y: 6, a: 7, s: 75 },
-    }[preset] || { x: 3, y: 3, a: 5, s: 85 };
+      strict: { x: 2, y: 2.5, s: 90, c: 82 },
+      normal: { x: 3, y: 4, s: 85, c: 75 },
+      loose: { x: 5, y: 6, s: 75, c: 65 },
+    }[preset] || { x: 3, y: 4, s: 85, c: 75 };
     dom.tolX.value = values.x;
     dom.tolY.value = values.y;
-    dom.tolAngle.value = values.a;
     dom.scoreMin.value = values.s;
+    dom.confMin.value = values.c;
     updateToleranceLabels();
   }
 
   function updateToleranceLabels() {
-    dom.tolXLabel.textContent = `${Number(dom.tolX.value).toFixed(1)} mm`;
-    dom.tolYLabel.textContent = `${Number(dom.tolY.value).toFixed(1)} mm`;
-    dom.tolAngleLabel.textContent = `${Number(dom.tolAngle.value).toFixed(0)}°`;
+    dom.tolXLabel.textContent = `${Number(dom.tolX.value).toFixed(1)}%`;
+    dom.tolYLabel.textContent = `${Number(dom.tolY.value).toFixed(1)}%`;
     dom.scoreMinLabel.textContent = `${Number(dom.scoreMin.value).toFixed(0)}%`;
+    dom.confMinLabel.textContent = `${Number(dom.confMin.value).toFixed(0)}%`;
   }
 
-  function getTolerances() {
+  function tolerances() {
     return {
-      xMm: Number(dom.tolX.value),
-      yMm: Number(dom.tolY.value),
-      angleDeg: Number(dom.tolAngle.value),
+      xPct: Number(dom.tolX.value),
+      yPct: Number(dom.tolY.value),
       scoreMin: Number(dom.scoreMin.value),
-      minReadConfidence: 0.74,
-      label: dom.precisionPreset.options[dom.precisionPreset.selectedIndex]?.textContent || "Normal",
+      confMin: Number(dom.confMin.value),
     };
-  }
-
-  function updateFlowUi(customMessage) {
-    const active = state.flow;
-    setStep(dom.stepCamera, active === "camera", state.cameraRunning || state.calibration);
-    setStep(dom.stepCard, active === "card", Boolean(state.calibration));
-    setStep(dom.stepMaster, active === "master", Boolean(state.master));
-    setStep(dom.stepPatch, active === "inspect", false);
-
-    let instruction = "Toca “Iniciar cámara”. Luego la app te pedirá la tarjeta 7×7.";
-    let action = "Inicia la cámara del celular.";
-
-    if (active === "card") {
-      instruction = "Coloca la tarjeta 7×7 dentro del recuadro. No la tapes con el dedo. Cuando diga “lista”, toca Calibrar.";
-      action = "Coloca la tarjeta con el cuadro negro 5×5 visible, plano y bien iluminado.";
-    } else if (active === "master") {
-      instruction = "Retira la tarjeta y coloca un parche que tú consideres correcto. Esta será la muestra buena.";
-      action = "Coloca un parche bueno. Si el texto no se detecta, toca “Marcar texto manual” y dibuja un rectángulo sobre el texto.";
-    } else if (active === "inspect") {
-      instruction = "Coloca el parche de producción. La app lo comparará contra la muestra buena y buscará el texto en la zona aprendida.";
-      action = "Coloca el parche dentro de la guía. Mantén el celular quieto un momento.";
-    }
-
-    dom.operatorInstruction.textContent = customMessage || instruction;
-    dom.nextAction.textContent = customMessage || action;
-  }
-
-  function setStep(el, active, done) {
-    el.classList.toggle("active", active);
-    el.classList.toggle("done", done && !active);
   }
 
   function waitForOpenCv() {
     const start = Date.now();
     const timer = setInterval(() => {
-      if (window.cv && cv.Mat && cv.imread && cv.findContours) {
+      if (window.cv && cv.Mat && cv.imread && cv.matchTemplate) {
         clearInterval(timer);
         state.cvReady = true;
         dom.opencvState.textContent = "OpenCV.js listo";
-        if (!state.cameraRunning) setMainState("SIN CÁMARA", "unstable");
-        return;
-      }
-      if (Date.now() - start > 25000) {
+        if (state.master && !state.template) rebuildTemplateFromMaster();
+        updateUi();
+      } else if (Date.now() - start > 25000) {
         clearInterval(timer);
-        dom.opencvState.textContent = "OpenCV.js no cargó. Recarga con buena conexión.";
+        dom.opencvState.textContent = "OpenCV.js no cargó. Recarga la página con buena conexión.";
       }
     }, 250);
   }
 
   async function startCamera() {
     try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setMainState("CÁMARA NO SOPORTADA", "bad");
-        return;
-      }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
@@ -237,1127 +171,719 @@
       });
       dom.video.srcObject = stream;
       await dom.video.play();
-      resizeCanvasFromVideo();
+      resizeCanvas();
       state.cameraRunning = true;
-      state.flow = "card";
+      state.frozen = false;
+      state.flow = state.master ? "inspect" : "master";
       dom.hint.style.display = "none";
       dom.btnCamera.textContent = "Cámara activa";
       dom.btnCamera.disabled = true;
-      setMainState("COLOCA TARJETA", "warn");
-      updateFlowUi();
+      dom.btnFreeze.disabled = false;
+      setMainState(state.master ? "INSPECCIONANDO" : "CREA MUESTRA", state.master ? "ok" : "warn");
+      updateUi();
       loop();
     } catch (err) {
       console.error(err);
       setMainState("ERROR DE CÁMARA", "bad");
-      dom.opencvState.textContent = "No se pudo abrir la cámara. Revisa permisos.";
+      dom.opencvState.textContent = "No se pudo abrir la cámara. Revisa permisos del navegador.";
     }
   }
 
-  function resizeCanvasFromVideo() {
+  function resizeCanvas() {
     const vw = dom.video.videoWidth || 1280;
     const vh = dom.video.videoHeight || 720;
-    const maxW = 980;
-    const scale = Math.min(1, maxW / vw);
-    dom.canvas.width = Math.round(vw * scale);
-    dom.canvas.height = Math.round(vh * scale);
-    state.rawCanvas.width = dom.canvas.width;
-    state.rawCanvas.height = dom.canvas.height;
+    dom.canvas.width = vw;
+    dom.canvas.height = vh;
+    state.rawCanvas.width = vw;
+    state.rawCanvas.height = vh;
   }
 
   function loop() {
     if (!state.cameraRunning) return;
-    state.frameId = requestAnimationFrame(loop);
-    if (!state.cvReady || state.processing) {
-      drawCameraFrameOnly();
+    if (!state.frozen) {
+      state.rawCtx.drawImage(dom.video, 0, 0, state.rawCanvas.width, state.rawCanvas.height);
+    }
+    drawBaseFrame();
+
+    if (state.flow === "inspect" && state.master && state.template && state.cvReady && !state.markingMode) {
+      // Baja frecuencia = menos brincos. La pantalla sigue fluida, la medición no se vuelve epilepsia corporativa.
+      if (state.frameCounter % 5 === 0) {
+        const inspection = inspectCurrentFrame();
+        if (inspection) {
+          state.lastInspection = inspection;
+          state.smoothInspection = smoothInspection(state.smoothInspection, inspection);
+          state.lastGoodInspectionAt = Date.now();
+        }
+      }
+    }
+
+    drawOverlay();
+    renderMeasurements();
+    publishTelemetryThrottled();
+
+    state.frameCounter += 1;
+    requestAnimationFrame(loop);
+  }
+
+  function drawBaseFrame() {
+    ctx.clearRect(0, 0, dom.canvas.width, dom.canvas.height);
+    ctx.drawImage(state.rawCanvas, 0, 0);
+  }
+
+  function setupPointerMarking() {
+    dom.canvas.addEventListener("pointerdown", (ev) => {
+      if (!state.markingMode) return;
+      ev.preventDefault();
+      dom.canvas.setPointerCapture(ev.pointerId);
+      const p = eventToCanvasPoint(ev);
+      state.markStart = p;
+      state.markCurrent = p;
+    });
+    dom.canvas.addEventListener("pointermove", (ev) => {
+      if (!state.markingMode || !state.markStart) return;
+      ev.preventDefault();
+      state.markCurrent = eventToCanvasPoint(ev);
+    });
+    dom.canvas.addEventListener("pointerup", (ev) => {
+      if (!state.markingMode || !state.markStart) return;
+      ev.preventDefault();
+      const end = eventToCanvasPoint(ev);
+      const rect = normalizeRect({ x: state.markStart.x, y: state.markStart.y, w: end.x - state.markStart.x, h: end.y - state.markStart.y });
+      if (rect.w > 20 && rect.h > 10) {
+        if (state.markingMode === "patch") {
+          state.patchCandidate = rect;
+          setMainState("PARCHE MARCADO", "ok");
+          state.flow = "master";
+        } else if (state.markingMode === "text") {
+          state.textCandidate = rect;
+          setMainState("TEXTO MARCADO", "ok");
+          state.flow = "master";
+        }
+      }
+      state.markingMode = null;
+      state.markStart = null;
+      state.markCurrent = null;
+      document.body.classList.remove("marking");
+      updateUi();
+    });
+  }
+
+  function eventToCanvasPoint(ev) {
+    const r = dom.canvas.getBoundingClientRect();
+    return {
+      x: clamp((ev.clientX - r.left) * (dom.canvas.width / r.width), 0, dom.canvas.width),
+      y: clamp((ev.clientY - r.top) * (dom.canvas.height / r.height), 0, dom.canvas.height),
+    };
+  }
+
+  function startMarking(mode) {
+    if (!state.cameraRunning) return;
+    state.markingMode = mode;
+    state.markStart = null;
+    state.markCurrent = null;
+    document.body.classList.add("marking");
+    setMainState(mode === "patch" ? "DIBUJA EL PARCHE" : "DIBUJA EL TEXTO", "warn");
+    dom.operatorInstruction.textContent = mode === "patch"
+      ? "Con el dedo, arrastra un rectángulo alrededor de TODO el parche bueno."
+      : "Con el dedo, arrastra un rectángulo SOLO sobre las letras. No incluyas borde ni sombras.";
+    dom.nextAction.textContent = dom.operatorInstruction.textContent;
+  }
+
+  function saveMaster() {
+    if (!state.patchCandidate || !state.textCandidate) {
+      setMainState("FALTA MARCAR", "bad");
+      dom.reasonText.textContent = "Primero marca el parche bueno y luego el texto bueno.";
       return;
     }
-    state.frameCounter += 1;
-    processFrame();
+    if (!rectInside(state.textCandidate, state.patchCandidate)) {
+      setMainState("TEXTO FUERA", "bad");
+      dom.reasonText.textContent = "El texto debe quedar dentro del rectángulo del parche.";
+      return;
+    }
+
+    const patchPct = rectToPct(state.patchCandidate);
+    const textPct = rectToPct(state.textCandidate);
+    const templateDataUrl = cropToDataUrl(state.textCandidate);
+
+    state.master = {
+      patchPct,
+      textPct,
+      templateDataUrl,
+      createdAt: new Date().toISOString(),
+      width: dom.canvas.width,
+      height: dom.canvas.height,
+      pxPerMm: state.pxPerMm,
+      scaleSource: state.scaleSource,
+    };
+    rebuildTemplateFromMaster();
+    saveMasterToStorage();
+    state.flow = "inspect";
+    state.lastInspection = null;
+    state.smoothInspection = null;
+    setMainState("MUESTRA GUARDADA", "ok");
+    updateUi();
   }
 
-  function drawCameraFrameOnly() {
-    if (!dom.video.videoWidth) return;
-    ctx.drawImage(dom.video, 0, 0, dom.canvas.width, dom.canvas.height);
-    drawGuide(ctx);
+  function startInspect() {
+    if (!state.master) return;
+    state.flow = "inspect";
+    state.markingMode = null;
+    state.smoothInspection = null;
+    setMainState("INSPECCIONANDO", "ok");
+    updateUi();
   }
 
-  function processFrame() {
-    state.processing = true;
-    state.rawCtx.drawImage(dom.video, 0, 0, dom.canvas.width, dom.canvas.height);
-    ctx.drawImage(state.rawCanvas, 0, 0);
+  function toggleFreeze() {
+    state.frozen = !state.frozen;
+    dom.btnFreeze.textContent = state.frozen ? "Reanudar imagen" : "Pausar imagen";
+    setMainState(state.frozen ? "IMAGEN PAUSADA" : (state.master ? "INSPECCIONANDO" : "CREA MUESTRA"), state.frozen ? "warn" : "ok");
+  }
+
+  function newMaster() {
+    state.flow = state.cameraRunning ? "master" : "camera";
+    state.patchCandidate = null;
+    state.textCandidate = null;
+    state.master = null;
+    state.template = null;
+    state.lastInspection = null;
+    state.smoothInspection = null;
+    localStorage.removeItem("inspector_v6_master");
+    setMainState(state.cameraRunning ? "CREA MUESTRA" : "SIN CÁMARA", state.cameraRunning ? "warn" : "unstable");
+    updateUi();
+  }
+
+  function clearMaster() {
+    newMaster();
+    localStorage.removeItem("inspector_v6_master");
+    localStorage.removeItem("inspector_v6_scale");
+    state.pxPerMm = null;
+    state.scaleSource = "Sin mm";
+    updateUi();
+  }
+
+  function usePatchAsScale() {
+    const patch = state.master ? pctToRect(state.master.patchPct) : state.patchCandidate;
+    if (!patch) return;
+    const realW = Number(dom.patchRealW.value);
+    const realH = Number(dom.patchRealH.value);
+    if (realW <= 0 || realH <= 0) return;
+    state.pxPerMm = ((patch.w / realW) + (patch.h / realH)) / 2;
+    state.scaleSource = `Parche ${realW.toFixed(1)}×${realH.toFixed(1)} mm`;
+    saveScaleToStorage();
+    if (state.master) {
+      state.master.pxPerMm = state.pxPerMm;
+      state.master.scaleSource = state.scaleSource;
+      saveMasterToStorage();
+    }
+    setMainState("ESCALA GUARDADA", "ok");
+    updateUi();
+  }
+
+  function calibrateWithCard() {
+    if (!state.cvReady || !state.cameraRunning) return;
+    const sidePx = detectBlackCardSidePx();
+    if (!sidePx) {
+      setMainState("NO LEE TARJETA", "bad");
+      dom.reasonText.textContent = "No se encontró claramente el cuadro negro 5×5. Usa papel mate, más contraste o calibra con tamaño del parche.";
+      return;
+    }
+    state.pxPerMm = sidePx / 50;
+    state.scaleSource = "Tarjeta 7×7 / negro 5×5";
+    saveScaleToStorage();
+    setMainState("TARJETA CALIBRADA", "ok");
+    updateUi();
+  }
+
+  function inspectCurrentFrame() {
+    if (!state.master || !state.template || !state.cvReady) return null;
+    const patchRect = pctToRect(state.master.patchPct);
+    const expectedText = pctToRect(state.master.textPct);
+    const marginX = patchRect.w * 0.20;
+    const marginY = patchRect.h * 0.26;
+    const search = clipRect({
+      x: expectedText.x - marginX,
+      y: expectedText.y - marginY,
+      w: expectedText.w + marginX * 2,
+      h: expectedText.h + marginY * 2,
+    }, patchRect);
+
+    const match = matchTextTemplate(search);
+    if (!match) {
+      return buildInspection({
+        patchRect,
+        expectedText,
+        foundText: null,
+        rawConfidence: 0,
+        visualMatch: 0,
+        reason: "No pude encontrar el texto con seguridad. Revisa luz, enfoque o vuelve a marcar la muestra.",
+      });
+    }
+
+    const foundText = {
+      x: search.x + match.x,
+      y: search.y + match.y,
+      w: state.template.w,
+      h: state.template.h,
+    };
+    const visualMatch = clamp(match.score * 100, 0, 100);
+    return buildInspection({
+      patchRect,
+      expectedText,
+      foundText,
+      rawConfidence: visualMatch,
+      visualMatch,
+      reason: "Lectura comparada contra la muestra maestra.",
+    });
+  }
+
+  function buildInspection({ patchRect, expectedText, foundText, rawConfidence, visualMatch, reason }) {
+    const t = tolerances();
+    let dxPx = 0;
+    let dyPx = 0;
+    let dxPct = 0;
+    let dyPct = 0;
+    let quality = 0;
+    let verdict = "NO LEE";
+    let verdictClass = "warn";
+    let finalReason = reason;
+
+    if (foundText) {
+      const expectedCx = expectedText.x + expectedText.w / 2;
+      const expectedCy = expectedText.y + expectedText.h / 2;
+      const foundCx = foundText.x + foundText.w / 2;
+      const foundCy = foundText.y + foundText.h / 2;
+      dxPx = foundCx - expectedCx;
+      dyPx = foundCy - expectedCy;
+      dxPct = (dxPx / patchRect.w) * 100;
+      dyPct = (dyPx / patchRect.h) * 100;
+      const xScore = scoreDistance(Math.abs(dxPct), t.xPct);
+      const yScore = scoreDistance(Math.abs(dyPct), t.yPct);
+      const visualScore = clamp((visualMatch - 45) / 55 * 100, 0, 100);
+      quality = clamp(xScore * 0.42 + yScore * 0.42 + visualScore * 0.16, 0, 100);
+
+      if (visualMatch < t.confMin) {
+        verdict = visualMatch < 55 ? "NO LEE" : "REVISAR";
+        verdictClass = "warn";
+        finalReason = "El texto no se encontró con suficiente seguridad. No rechaces la pieza solo con esta lectura.";
+      } else if (quality >= t.scoreMin) {
+        verdict = "OK";
+        verdictClass = "ok";
+        finalReason = "El texto coincide con la muestra buena dentro de la tolerancia.";
+      } else {
+        verdict = "MAL";
+        verdictClass = "bad";
+        finalReason = "El texto se aleja de la posición guardada en la muestra buena.";
+      }
+    }
+
+    return {
+      ts: Date.now(),
+      patchRect,
+      expectedText,
+      foundText,
+      dxPx,
+      dyPx,
+      dxPct,
+      dyPct,
+      dxHuman: movementText(dxPx, dxPct, patchRect.w, "x"),
+      dyHuman: movementText(dyPx, dyPct, patchRect.h, "y"),
+      quality,
+      readConfidence: visualMatch,
+      visualMatch,
+      verdict,
+      verdictClass,
+      reason: finalReason,
+      scale: state.pxPerMm,
+      scaleSource: state.scaleSource,
+    };
+  }
+
+  function scoreDistance(valuePct, tolerancePct) {
+    if (valuePct <= tolerancePct) return 100;
+    if (valuePct >= tolerancePct * 3) return 0;
+    return clamp(100 - ((valuePct - tolerancePct) / (tolerancePct * 2)) * 100, 0, 100);
+  }
+
+  function movementText(deltaPx, deltaPct, patchPx, axis) {
+    const absPct = Math.abs(deltaPct);
+    let amount;
+    if (state.pxPerMm) {
+      amount = `${Math.abs(deltaPx / state.pxPerMm).toFixed(1)} mm`;
+    } else {
+      amount = `${absPct.toFixed(1)}%`;
+    }
+    if (absPct < 0.45) return "Centrado";
+    if (axis === "x") return `${amount} ${deltaPx > 0 ? "derecha" : "izquierda"}`;
+    return `${amount} ${deltaPx > 0 ? "abajo" : "arriba"}`;
+  }
+
+  function smoothInspection(prev, cur) {
+    if (!prev) return cur;
+    const alpha = 0.26;
+    if (!cur.foundText || !prev.foundText) return cur;
+    const smoothRect = (a, b) => ({
+      x: lerp(a.x, b.x, alpha),
+      y: lerp(a.y, b.y, alpha),
+      w: lerp(a.w, b.w, alpha),
+      h: lerp(a.h, b.h, alpha),
+    });
+    const mixed = { ...cur };
+    mixed.foundText = smoothRect(prev.foundText, cur.foundText);
+    mixed.dxPx = lerp(prev.dxPx, cur.dxPx, alpha);
+    mixed.dyPx = lerp(prev.dyPx, cur.dyPx, alpha);
+    mixed.dxPct = lerp(prev.dxPct, cur.dxPct, alpha);
+    mixed.dyPct = lerp(prev.dyPct, cur.dyPct, alpha);
+    mixed.quality = lerp(prev.quality, cur.quality, alpha);
+    mixed.readConfidence = lerp(prev.readConfidence, cur.readConfidence, alpha);
+    mixed.visualMatch = lerp(prev.visualMatch, cur.visualMatch, alpha);
+    mixed.dxHuman = movementText(mixed.dxPx, mixed.dxPct, mixed.patchRect.w, "x");
+    mixed.dyHuman = movementText(mixed.dyPx, mixed.dyPct, mixed.patchRect.h, "y");
+    return mixed;
+  }
+
+  function matchTextTemplate(searchRect) {
     let src = null;
     let gray = null;
+    let eq = null;
+    let edge = null;
+    let resultGray = null;
+    let resultEdge = null;
+    try {
+      src = cv.imread(state.rawCanvas);
+      const sr = safeCvRect(searchRect, src.cols, src.rows);
+      if (sr.width <= state.template.w || sr.height <= state.template.h) return null;
+      const roi = src.roi(sr);
+      gray = new cv.Mat();
+      cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
+      roi.delete();
+      eq = new cv.Mat();
+      cv.equalizeHist(gray, eq);
+      edge = new cv.Mat();
+      cv.Canny(eq, edge, 40, 130);
 
+      resultGray = new cv.Mat();
+      resultEdge = new cv.Mat();
+      cv.matchTemplate(eq, state.template.gray, resultGray, cv.TM_CCOEFF_NORMED);
+      cv.matchTemplate(edge, state.template.edge, resultEdge, cv.TM_CCOEFF_NORMED);
+      const mmGray = cv.minMaxLoc(resultGray);
+      const mmEdge = cv.minMaxLoc(resultEdge);
+      const useEdge = mmEdge.maxVal > mmGray.maxVal + 0.04;
+      const loc = useEdge ? mmEdge.maxLoc : mmGray.maxLoc;
+      const rawScore = useEdge ? mmEdge.maxVal : mmGray.maxVal;
+      const blendedScore = clamp((Math.max(mmGray.maxVal, mmEdge.maxVal) * 0.75 + Math.min(mmGray.maxVal, mmEdge.maxVal) * 0.25), 0, 1);
+      return { x: loc.x, y: loc.y, score: Math.max(rawScore, blendedScore) };
+    } catch (err) {
+      console.warn("matchTextTemplate", err);
+      return null;
+    } finally {
+      [src, gray, eq, edge, resultGray, resultEdge].forEach((m) => { if (m) m.delete(); });
+    }
+  }
+
+  function rebuildTemplateFromMaster() {
+    if (!state.master || !state.cvReady) return;
+    if (state.template) {
+      if (state.template.gray) state.template.gray.delete();
+      if (state.template.edge) state.template.edge.delete();
+      state.template = null;
+    }
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = img.width;
+      c.height = img.height;
+      const cctx = c.getContext("2d");
+      cctx.drawImage(img, 0, 0);
+      let src = null;
+      let gray = null;
+      let eq = null;
+      let edge = null;
+      try {
+        src = cv.imread(c);
+        gray = new cv.Mat();
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+        eq = new cv.Mat();
+        cv.equalizeHist(gray, eq);
+        edge = new cv.Mat();
+        cv.Canny(eq, edge, 40, 130);
+        state.template = { gray: eq.clone(), edge: edge.clone(), w: c.width, h: c.height };
+        updateUi();
+      } catch (err) {
+        console.warn("template", err);
+      } finally {
+        [src, gray, eq, edge].forEach((m) => { if (m) m.delete(); });
+      }
+    };
+    img.src = state.master.templateDataUrl;
+  }
+
+  function detectBlackCardSidePx() {
+    let src = null;
+    let gray = null;
+    let blurred = null;
+    let binary = null;
+    let contours = null;
+    let hierarchy = null;
     try {
       src = cv.imread(state.rawCanvas);
       gray = new cv.Mat();
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
-      let card = null;
-      if (state.flow === "card") {
-        card = detectCalibrationCard(gray);
-        state.liveCard = card;
-        state.smoothCard = smoothCard(card);
-        updateScaleSamples(state.smoothCard || card);
-      }
-
-      const stable = getScaleStability();
-      const pxPerMm = state.calibration ? state.calibration.pxPerMm : null;
-      let inspection = null;
-      if ((state.flow === "master" || state.flow === "inspect") && pxPerMm) {
-        let rawInspection = detectPatchAndText(gray, pxPerMm, state.master);
-        if (rawInspection && rawInspection.patch && state.manualTextOverride) {
-          const manualText = textFromManualBox(state.manualTextOverride, pxPerMm);
-          rawInspection = {
-            patch: rawInspection.patch,
-            text: manualText,
-            metrics: computeAlignmentMetricsFromPlain(rawInspection.patch, manualText, pxPerMm),
-            manual: true,
-          };
-        }
-        if (rawInspection && rawInspection.text) {
-          const template = extractTemplateFromRawFrame(rawInspection.text.bbox || bboxFromBoxText(rawInspection.text));
-          if (template) state.lastTextTemplateCandidate = template;
-        }
-        inspection = smoothInspection(rawInspection);
-      }
-      state.currentInspection = inspection;
-
-      const payload = buildPayload(state.smoothCard || card, stable, inspection);
-      drawOverlay(payload, state.smoothCard || card, inspection);
-      updateUi(payload);
-      maybeSend(payload);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      if (gray) gray.delete();
-      if (src) src.delete();
-      state.processing = false;
-    }
-  }
-
-  // ---------- Calibración 7×7 / interior 5×5 ----------
-
-  function detectCalibrationCard(gray) {
-    const work = new cv.Mat();
-    const blur = new cv.Mat();
-    const masks = [];
-    let best = null;
-
-    try {
-      cv.equalizeHist(gray, work);
-      cv.GaussianBlur(work, blur, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-
-      masks.push(makeThresholdMask(blur, 0, cv.THRESH_BINARY_INV + cv.THRESH_OTSU, "otsu negro"));
-      masks.push(makeThresholdMask(blur, 135, cv.THRESH_BINARY_INV, "negro 135"));
-      masks.push(makeThresholdMask(blur, 165, cv.THRESH_BINARY_INV, "negro 165"));
-      masks.push(makeAdaptiveSquareMask(blur));
-      masks.push(makeSquareEdgeMask(blur));
-
-      const frameArea = gray.rows * gray.cols;
-      const minSide = Math.min(gray.rows, gray.cols) * 0.065;
-      const maxSide = Math.min(gray.rows, gray.cols) * 0.68;
-
-      for (const item of masks) {
-        const cleaned = cleanSquareMask(item.mask);
-        const contours = new cv.MatVector();
-        const hierarchy = new cv.Mat();
-        try {
-          cv.findContours(cleaned, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-          for (let i = 0; i < contours.size(); i++) {
-            const cnt = contours.get(i);
-            const area = cv.contourArea(cnt);
-            if (area < frameArea * 0.0007 || area > frameArea * 0.38) { cnt.delete(); continue; }
-
-            const rect = cv.minAreaRect(cnt);
-            const w = Math.max(rect.size.width, 1);
-            const h = Math.max(rect.size.height, 1);
-            const side = (w + h) / 2;
-            const ratio = Math.max(w, h) / Math.min(w, h);
-            const fill = area / Math.max(w * h, 1);
-            const bbox = cv.boundingRect(cnt);
-            const contrast = estimateDarkSquareContrast(gray, bbox);
-            const centerBias = 1 - Math.min(1, distanceNorm(rect.center.x, rect.center.y, gray.cols / 2, gray.rows / 2, gray.cols, gray.rows));
-            const anglePenalty = Math.abs(normalizeAngle(rect.angle)) / 45;
-
-            const okSize = side >= minSide && side <= maxSide;
-            const okShape = ratio <= 1.34 && fill >= 0.36;
-            const okContrast = contrast >= 6;
-            if (!okSize || !okShape || !okContrast) { cnt.delete(); continue; }
-
-            const score = area * (0.7 + centerBias * 0.45) * (1 + Math.min(contrast, 75) / 120) * (1 - Math.min(anglePenalty, 0.55) * 0.12);
-            if (!best || score > best.score) {
-              best = {
-                score,
-                area,
-                rect: cloneRotatedRect(rect),
-                bbox,
-                sidePx: side,
-                pxPerMm: side / 50.0,
-                vertices: rectPoints(rect),
-                expectedOuter: expectedOuterFromInner(rect, 1.4),
-                contrast,
-                method: item.name,
-              };
-            }
-            cnt.delete();
-          }
-        } finally {
-          contours.delete(); hierarchy.delete(); cleaned.delete();
-        }
-      }
-    } finally {
-      for (const item of masks) item.mask.delete();
-      work.delete(); blur.delete();
-    }
-    return best;
-  }
-
-  function makeThresholdMask(src, threshold, type, name) {
-    const mask = new cv.Mat();
-    cv.threshold(src, mask, threshold, 255, type);
-    return { name, mask };
-  }
-
-  function makeAdaptiveSquareMask(src) {
-    const mask = new cv.Mat();
-    let block = Math.max(31, Math.floor(Math.min(src.cols, src.rows) / 7));
-    if (block % 2 === 0) block += 1;
-    block = Math.min(block, 91);
-    cv.adaptiveThreshold(src, mask, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, block, 5);
-    return { name: "adaptativo", mask };
-  }
-
-  function makeSquareEdgeMask(src) {
-    const edges = new cv.Mat();
-    const mask = new cv.Mat();
-    const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-    cv.Canny(src, edges, 35, 115, 3, false);
-    cv.dilate(edges, mask, kernel, new cv.Point(-1, -1), 1);
-    kernel.delete(); edges.delete();
-    return { name: "bordes", mask };
-  }
-
-  function cleanSquareMask(mask) {
-    const cleaned = new cv.Mat();
-    const k1 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-    const k2 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(7, 7));
-    cv.morphologyEx(mask, cleaned, cv.MORPH_OPEN, k1);
-    cv.morphologyEx(cleaned, cleaned, cv.MORPH_CLOSE, k2);
-    k1.delete(); k2.delete();
-    return cleaned;
-  }
-
-  function estimateDarkSquareContrast(gray, bbox) {
-    const x = clamp(bbox.x, 0, gray.cols - 2);
-    const y = clamp(bbox.y, 0, gray.rows - 2);
-    const w = clamp(bbox.width, 2, gray.cols - x);
-    const h = clamp(bbox.height, 2, gray.rows - y);
-    const grow = Math.round(Math.max(w, h) * 0.22);
-    const ex = clamp(x - grow, 0, gray.cols - 2);
-    const ey = clamp(y - grow, 0, gray.rows - 2);
-    const er = clamp(x + w + grow, ex + 2, gray.cols);
-    const eb = clamp(y + h + grow, ey + 2, gray.rows);
-    const inner = gray.roi(new cv.Rect(x, y, w, h));
-    const outer = gray.roi(new cv.Rect(ex, ey, er - ex, eb - ey));
-    try {
-      const mi = cv.mean(inner)[0];
-      const mo = cv.mean(outer)[0];
-      return mo - mi;
-    } finally {
-      inner.delete(); outer.delete();
-    }
-  }
-
-  function expectedOuterFromInner(rect, factor) {
-    return {
-      center: { x: rect.center.x, y: rect.center.y },
-      size: { width: rect.size.width * factor, height: rect.size.height * factor },
-      angle: rect.angle,
-    };
-  }
-
-  function smoothCard(card) {
-    if (!card) return state.smoothCard;
-    if (!state.smoothCard) return card;
-    const a = 0.22;
-    const prev = state.smoothCard;
-    const rect = {
-      center: {
-        x: lerp(prev.rect.center.x, card.rect.center.x, a),
-        y: lerp(prev.rect.center.y, card.rect.center.y, a),
-      },
-      size: {
-        width: lerp(prev.rect.size.width, card.rect.size.width, a),
-        height: lerp(prev.rect.size.height, card.rect.size.height, a),
-      },
-      angle: lerpAngle(prev.rect.angle, card.rect.angle, a),
-    };
-    const side = (rect.size.width + rect.size.height) / 2;
-    return {
-      ...card,
-      rect,
-      sidePx: side,
-      pxPerMm: side / 50,
-      vertices: boxPoints(rect.center, rect.size.width, rect.size.height, rect.angle),
-      expectedOuter: expectedOuterFromInner(rect, 1.4),
-    };
-  }
-
-  function updateScaleSamples(card) {
-    if (!card || !Number.isFinite(card.pxPerMm)) return;
-    const sample = { value: card.pxPerMm, x: card.rect.center.x, y: card.rect.center.y, t: performance.now(), contrast: card.contrast || 0 };
-    state.scaleSamples.push(sample);
-    if (state.scaleSamples.length > 18) state.scaleSamples.shift();
-  }
-
-  function getScaleStability() {
-    const samples = state.scaleSamples.slice(-12);
-    if (samples.length < 7) return { ok: false, label: "Esperando", average: null, cv: null, drift: null };
-    const values = samples.map((s) => s.value);
-    const avg = values.reduce((a, b) => a + b, 0) / values.length;
-    const variance = values.reduce((acc, v) => acc + Math.pow(v - avg, 2), 0) / values.length;
-    const std = Math.sqrt(variance);
-    const cvValue = std / Math.max(avg, 0.0001);
-    const xs = samples.map((s) => s.x);
-    const ys = samples.map((s) => s.y);
-    const drift = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
-    const contrastAvg = samples.map(s => s.contrast).reduce((a,b)=>a+b,0)/samples.length;
-    const ok = cvValue < 0.035 && drift < 24 && contrastAvg > 6;
-    return { ok, label: ok ? "Lista" : "Movida", average: avg, cv: cvValue, drift, contrastAvg };
-  }
-
-  function lockCalibration() {
-    const stable = getScaleStability();
-    if (!state.liveCard || !stable.average || !stable.ok) return;
-    state.calibration = {
-      pxPerMm: stable.average,
-      lockedAt: new Date().toISOString(),
-      source: "Tarjeta 7×7 cm / interior negro 5×5 cm",
-    };
-    state.flow = "master";
-    state.smoothInspection = null;
-    dom.lockedScale.textContent = `${stable.average.toFixed(2)} px/mm`;
-    setMainState("COLOCA MUESTRA", "ok");
-    updateFlowUi("Calibración guardada. Retira la tarjeta y coloca un parche BUENO para usarlo como muestra correcta.");
-  }
-
-
-  // ---------- Marcado manual y aprendizaje visual del texto ----------
-
-  function toggleManualTextMode() {
-    if (!(state.flow === "master" || state.flow === "inspect")) return;
-    if (!state.currentInspection || !state.currentInspection.patch) return;
-    state.manualTextMode = !state.manualTextMode;
-    state.manualStart = null;
-    state.manualCurrent = null;
-    if (!state.manualTextMode) state.manualTextOverride = null;
-    updateFlowUi(state.manualTextMode
-      ? "Arrastra un rectángulo sobre el texto. No marques el parche completo, solo el bloque de letras."
-      : undefined);
-  }
-
-  function setupManualTextPointerEvents() {
-    const canvas = dom.canvas;
-    canvas.addEventListener("pointerdown", (ev) => {
-      if (!state.manualTextMode) return;
-      ev.preventDefault();
-      const p = canvasPoint(ev);
-      state.manualStart = p;
-      state.manualCurrent = p;
-    });
-    canvas.addEventListener("pointermove", (ev) => {
-      if (!state.manualTextMode || !state.manualStart) return;
-      ev.preventDefault();
-      state.manualCurrent = canvasPoint(ev);
-    });
-    canvas.addEventListener("pointerup", (ev) => {
-      if (!state.manualTextMode || !state.manualStart) return;
-      ev.preventDefault();
-      state.manualCurrent = canvasPoint(ev);
-      const r = rectFromTwoPoints(state.manualStart, state.manualCurrent);
-      const pxPerMm = state.calibration ? state.calibration.pxPerMm : null;
-      if (pxPerMm && r.width > 8 && r.height > 5) {
-        state.manualTextOverride = r;
-        const template = extractTemplateFromRawFrame(r);
-        if (template) state.lastTextTemplateCandidate = template;
-        updateFlowUi("Texto marcado. Si el rectángulo cubre solo las letras, toca “Guardar parche bueno”.");
-      }
-      state.manualStart = null;
-      state.manualCurrent = null;
-    });
-  }
-
-  function canvasPoint(ev) {
-    const rect = dom.canvas.getBoundingClientRect();
-    return {
-      x: clamp((ev.clientX - rect.left) * dom.canvas.width / rect.width, 0, dom.canvas.width),
-      y: clamp((ev.clientY - rect.top) * dom.canvas.height / rect.height, 0, dom.canvas.height),
-    };
-  }
-
-  function rectFromTwoPoints(a, b) {
-    const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-    return { x, y, width: Math.abs(a.x - b.x), height: Math.abs(a.y - b.y) };
-  }
-
-  function textFromManualBox(r, pxPerMm) {
-    const center = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-    return {
-      center,
-      widthPx: r.width,
-      heightPx: r.height,
-      widthMm: r.width / pxPerMm,
-      heightMm: r.height / pxPerMm,
-      angleDeg: 0,
-      bbox: { x: r.x, y: r.y, width: r.width, height: r.height },
-      vertices: boxPoints(center, r.width, r.height, 0),
-      confidence: 0.96,
-      method: "manual",
-    };
-  }
-
-  function bboxFromBoxText(t) {
-    const xs = t.vertices.map(p => p.x), ys = t.vertices.map(p => p.y);
-    const x = Math.min(...xs), y = Math.min(...ys);
-    return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
-  }
-
-  function extractTemplateFromRawFrame(bbox) {
-    if (!bbox || !state.rawCanvas.width || !state.rawCanvas.height) return null;
-    const pad = 3;
-    const x = Math.round(clamp(bbox.x - pad, 0, state.rawCanvas.width - 1));
-    const y = Math.round(clamp(bbox.y - pad, 0, state.rawCanvas.height - 1));
-    const r = Math.round(clamp(bbox.x + bbox.width + pad, x + 3, state.rawCanvas.width));
-    const b = Math.round(clamp(bbox.y + bbox.height + pad, y + 3, state.rawCanvas.height));
-    const w = r - x, h = b - y;
-    if (w < 6 || h < 4 || w > state.rawCanvas.width * 0.80 || h > state.rawCanvas.height * 0.40) return null;
-    const img = state.rawCtx.getImageData(x, y, w, h);
-    const gray = new Uint8Array(w * h);
-    for (let i = 0, j = 0; i < img.data.length; i += 4, j++) {
-      gray[j] = Math.round(img.data[i] * 0.299 + img.data[i + 1] * 0.587 + img.data[i + 2] * 0.114);
-    }
-    return { x, y, width: w, height: h, data: Array.from(gray) };
-  }
-
-  function detectTextByTemplate(gray, patchBbox, patchRect, pxPerMm, master) {
-    if (!master || !master.template || !master.alignment || !master.text) return null;
-    const tpl = master.template;
-    if (!tpl.data || tpl.width < 6 || tpl.height < 4) return null;
-
-    const patchInfo = normalizedRectInfo(patchRect);
-    const expected = expectedTextCenterFromMaster(patchInfo, master, pxPerMm);
-    if (!expected) return null;
-
-    const tw = Math.max(6, Math.round(tpl.width));
-    const th = Math.max(4, Math.round(tpl.height));
-    const searchW = Math.max(tw * 3.8, (master.text.widthMm || 20) * pxPerMm * 2.6);
-    const searchH = Math.max(th * 5.0, (master.text.heightMm || 6) * pxPerMm * 5.2);
-    const innerPad = Math.max(5, 2.0 * pxPerMm);
-    const minX = patchBbox.x + innerPad;
-    const minY = patchBbox.y + innerPad;
-    const maxX = patchBbox.x + patchBbox.width - innerPad;
-    const maxY = patchBbox.y + patchBbox.height - innerPad;
-    const x0 = Math.round(clamp(expected.x - searchW / 2, minX, maxX - tw - 2));
-    const y0 = Math.round(clamp(expected.y - searchH / 2, minY, maxY - th - 2));
-    const x1 = Math.round(clamp(expected.x + searchW / 2, x0 + tw + 2, maxX));
-    const y1 = Math.round(clamp(expected.y + searchH / 2, y0 + th + 2, maxY));
-    const sw = x1 - x0, sh = y1 - y0;
-    if (sw <= tw + 1 || sh <= th + 1) return null;
-
-    const search = gray.roi(new cv.Rect(x0, y0, sw, sh));
-    const searchEq = new cv.Mat();
-    const templ = cv.matFromArray(th, tw, cv.CV_8UC1, tpl.data);
-    const templEq = new cv.Mat();
-    const result = new cv.Mat();
-    try {
-      cv.equalizeHist(search, searchEq);
-      cv.equalizeHist(templ, templEq);
-      cv.matchTemplate(searchEq, templEq, result, cv.TM_CCOEFF_NORMED);
-      const mm = cv.minMaxLoc(result);
-      const confidence = clamp01((mm.maxVal - 0.22) / 0.58);
-      if (mm.maxVal < 0.36) return null;
-      const rx = x0 + mm.maxLoc.x;
-      const ry = y0 + mm.maxLoc.y;
-      const center = { x: rx + tw / 2, y: ry + th / 2 };
-      return {
-        center,
-        widthPx: tw,
-        heightPx: th,
-        widthMm: tw / pxPerMm,
-        heightMm: th / pxPerMm,
-        angleDeg: patchInfo.angle + (master.alignment?.angleDeg || 0),
-        bbox: { x: rx, y: ry, width: tw, height: th },
-        vertices: boxPoints(center, tw, th, patchInfo.angle + (master.alignment?.angleDeg || 0)),
-        confidence: Math.max(0.74, confidence),
-        method: "muestra visual",
-      };
-    } finally {
-      search.delete(); searchEq.delete(); templ.delete(); templEq.delete(); result.delete();
-    }
-  }
-
-  // ---------- Detección parche/texto ----------
-
-  function detectPatchAndText(gray, pxPerMm, master) {
-    const blur = new cv.Mat();
-    const edges = new cv.Mat();
-    const dilated = new cv.Mat();
-    const contours = new cv.MatVector();
-    const hierarchy = new cv.Mat();
-    let kernel = null;
-    let bestContour = null;
-    let bestScore = -Infinity;
-
-    try {
-      cv.GaussianBlur(gray, blur, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
-      cv.Canny(blur, edges, 30, 105, 3, false);
-      kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-      cv.dilate(edges, dilated, kernel, new cv.Point(-1, -1), 1);
-      cv.findContours(dilated, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-      const frameArea = gray.rows * gray.cols;
+      blurred = new cv.Mat();
+      cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+      binary = new cv.Mat();
+      cv.threshold(blurred, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+      contours = new cv.MatVector();
+      hierarchy = new cv.Mat();
+      cv.findContours(binary, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      let best = null;
+      const imageArea = src.cols * src.rows;
       for (let i = 0; i < contours.size(); i++) {
         const cnt = contours.get(i);
         const area = cv.contourArea(cnt);
-        if (area < frameArea * 0.004 || area > frameArea * 0.72) { cnt.delete(); continue; }
-
-        const rect = cv.minAreaRect(cnt);
-        const w = Math.max(rect.size.width, 1);
-        const h = Math.max(rect.size.height, 1);
-        const ratio = Math.max(w, h) / Math.min(w, h);
-        if (ratio > 5.2 || Math.min(w, h) < 22) { cnt.delete(); continue; }
-
-        const centerBias = 1 - Math.min(1, distanceNorm(rect.center.x, rect.center.y, gray.cols / 2, gray.rows / 2, gray.cols, gray.rows));
-        const score = area * (0.55 + centerBias * 0.65);
-        if (score > bestScore) {
-          if (bestContour) bestContour.delete();
-          bestContour = cnt.clone();
-          bestScore = score;
-        }
+        if (area < imageArea * 0.01 || area > imageArea * 0.55) { cnt.delete(); continue; }
+        const rr = cv.minAreaRect(cnt);
+        const w = rr.size.width;
+        const h = rr.size.height;
+        const ratio = Math.max(w, h) / Math.max(1, Math.min(w, h));
+        if (ratio > 1.18) { cnt.delete(); continue; }
+        const side = (w + h) / 2;
+        const score = area * (1 / ratio);
+        if (!best || score > best.score) best = { side, score };
         cnt.delete();
       }
-
-      if (!bestContour) return null;
-
-      const patchRect = cv.minAreaRect(bestContour);
-      const patchInfo = normalizedRectInfo(patchRect);
-      const patch = {
-        center: patchInfo.center,
-        widthPx: patchInfo.width,
-        heightPx: patchInfo.height,
-        widthMm: patchInfo.width / pxPerMm,
-        heightMm: patchInfo.height / pxPerMm,
-        angleDeg: patchInfo.angle,
-        vertices: rectPoints(patchRect),
-        bbox: cv.boundingRect(bestContour),
-      };
-
-      const text = detectTextInsidePatch(gray, bestContour, patchRect, pxPerMm, master);
-      if (!text) return { patch, text: null, metrics: null };
-
-      const metrics = computeAlignmentMetricsFromPlain(patch, text, pxPerMm);
-      return { patch, text, metrics };
-    } finally {
-      if (bestContour) bestContour.delete();
-      blur.delete(); edges.delete(); dilated.delete(); contours.delete(); hierarchy.delete(); if (kernel) kernel.delete();
-    }
-  }
-
-  function detectTextInsidePatch(gray, patchContour, patchRect, pxPerMm, master) {
-    const bbox = cv.boundingRect(patchContour);
-    const templateHit = detectTextByTemplate(gray, bbox, patchRect, pxPerMm, master);
-    if (templateHit) return templateHit;
-    const pad = Math.max(7, Math.round(2.6 * pxPerMm));
-    const x = clamp(Math.floor(bbox.x + pad), 0, gray.cols - 1);
-    const y = clamp(Math.floor(bbox.y + pad), 0, gray.rows - 1);
-    const right = clamp(Math.ceil(bbox.x + bbox.width - pad), x + 1, gray.cols);
-    const bottom = clamp(Math.ceil(bbox.y + bbox.height - pad), y + 1, gray.rows);
-    const w = right - x;
-    const h = bottom - y;
-    if (w < 25 || h < 20) return null;
-
-    const roi = gray.roi(new cv.Rect(x, y, w, h));
-    const eq = new cv.Mat();
-    const blur = new cv.Mat();
-    cv.equalizeHist(roi, eq);
-    cv.GaussianBlur(eq, blur, new cv.Size(3, 3), 0, 0, cv.BORDER_DEFAULT);
-
-    const patchInfo = normalizedRectInfo(patchRect);
-    const expected = expectedTextCenterFromMaster(patchInfo, master, pxPerMm);
-    const masks = [];
-    try {
-      masks.push(makeAdaptiveMask(blur, true));
-      masks.push(makeAdaptiveMask(blur, false));
-      masks.push(makeOtsuMask(blur, true));
-      masks.push(makeOtsuMask(blur, false));
-      masks.push(makeEdgeTextMask(blur));
-
-      let best = null;
-      for (const item of masks) {
-        const candidate = collectTextCandidateFromMask(item.mask, x, y, w, h, pxPerMm, item.name, expected, master);
-        if (candidate && (!best || candidate.score > best.score)) best = candidate;
-      }
-
-      if (!best || !best.points || best.points.length < 10 || !best.union) return null;
-
-      const pointMat = cv.matFromArray(best.points.length / 2, 1, cv.CV_32SC2, best.points);
-      const textRect = cv.minAreaRect(pointMat);
-      pointMat.delete();
-      const info = normalizedRectInfo(textRect);
-
-      if (info.width > w * 0.95 || info.height > h * 0.80) return null;
-
-      return {
-        center: info.center,
-        widthPx: info.width,
-        heightPx: info.height,
-        widthMm: info.width / pxPerMm,
-        heightMm: info.height / pxPerMm,
-        angleDeg: info.angle,
-        bbox: best.union,
-        vertices: rectPoints(textRect),
-        confidence: best.confidence,
-        method: best.method,
-      };
-    } finally {
-      for (const item of masks) item.mask.delete();
-      blur.delete(); eq.delete(); roi.delete();
-    }
-  }
-
-  function expectedTextCenterFromMaster(patchInfo, master, pxPerMm) {
-    if (!master || !master.alignment) return null;
-    const theta = degToRad(patchInfo.angle);
-    const ux = { x: Math.cos(theta), y: Math.sin(theta) };
-    const uy = { x: -Math.sin(theta), y: Math.cos(theta) };
-    const dx = master.alignment.offsetXmm * pxPerMm;
-    const dy = master.alignment.offsetYmm * pxPerMm;
-    return {
-      x: patchInfo.center.x + ux.x * dx + uy.x * dy,
-      y: patchInfo.center.y + ux.y * dx + uy.y * dy,
-      widthMm: master.text?.widthMm || null,
-      heightMm: master.text?.heightMm || null,
-    };
-  }
-
-  function makeAdaptiveMask(src, inverse) {
-    const mask = new cv.Mat();
-    const minSide = Math.min(src.cols, src.rows);
-    let block = Math.max(15, Math.floor(minSide / 3));
-    if (block % 2 === 0) block += 1;
-    block = Math.min(block, 65);
-    cv.adaptiveThreshold(src, mask, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, inverse ? cv.THRESH_BINARY_INV : cv.THRESH_BINARY, block, 7);
-    postProcessTextMask(mask);
-    return { name: inverse ? "texto oscuro" : "texto claro", mask };
-  }
-
-  function makeOtsuMask(src, inverse) {
-    const mask = new cv.Mat();
-    cv.threshold(src, mask, 0, 255, (inverse ? cv.THRESH_BINARY_INV : cv.THRESH_BINARY) + cv.THRESH_OTSU);
-    postProcessTextMask(mask);
-    return { name: inverse ? "otsu oscuro" : "otsu claro", mask };
-  }
-
-  function makeEdgeTextMask(src) {
-    const edges = new cv.Mat();
-    const mask = new cv.Mat();
-    cv.Canny(src, edges, 30, 100, 3, false);
-    edges.copyTo(mask);
-    edges.delete();
-    postProcessTextMask(mask, true);
-    return { name: "bordes", mask };
-  }
-
-  function postProcessTextMask(mask, edgeMode) {
-    const k1 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(edgeMode ? 3 : 2, 2));
-    const k2 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(edgeMode ? 8 : 7, 3));
-    cv.morphologyEx(mask, mask, cv.MORPH_OPEN, k1);
-    cv.morphologyEx(mask, mask, cv.MORPH_CLOSE, k2);
-    k1.delete(); k2.delete();
-  }
-
-  function collectTextCandidateFromMask(mask, originX, originY, roiW, roiH, pxPerMm, method, expected, master) {
-    const contours = new cv.MatVector();
-    const hierarchy = new cv.Mat();
-    let union = null;
-    let points = [];
-    let kept = 0;
-    let inkArea = 0;
-
-    try {
-      cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-      const roiArea = roiW * roiH;
-      const minArea = Math.max(6, roiArea * 0.00010);
-      const maxArea = roiArea * 0.25;
-      const minH = Math.max(3, 0.35 * pxPerMm);
-      const maxH = roiH * 0.62;
-
-      for (let i = 0; i < contours.size(); i++) {
-        const cnt = contours.get(i);
-        const b = cv.boundingRect(cnt);
-        const boxArea = b.width * b.height;
-        const area = Math.max(cv.contourArea(cnt), boxArea * 0.18);
-        const touchesBorder = b.x < roiW * 0.008 || b.y < roiH * 0.008 || (b.x + b.width) > roiW * 0.992 || (b.y + b.height) > roiH * 0.992;
-        const tooBig = boxArea > maxArea || b.width > roiW * 0.94 || b.height > maxH;
-        const tooSmall = boxArea < minArea || b.width < 2 || b.height < minH;
-        const tooSkinnyTall = b.height > b.width * 8;
-        if (!tooSmall && !tooBig && !touchesBorder && !tooSkinnyTall) {
-          const globalB = { x: originX + b.x, y: originY + b.y, width: b.width, height: b.height };
-          union = union ? unionRect(union, globalB) : globalB;
-          inkArea += area;
-          kept++;
-          const data = cnt.data32S;
-          for (let p = 0; p < data.length; p += 2) points.push(data[p] + originX, data[p + 1] + originY);
-        }
-        cnt.delete();
-      }
-
-      if (!union || kept < 1 || points.length < 10) return null;
-      const unionArea = union.width * union.height;
-      const unionCx = union.x + union.width / 2;
-      const unionCy = union.y + union.height / 2;
-      const unionLocalCx = unionCx - originX;
-      const unionLocalCy = unionCy - originY;
-      const centerPenalty = distanceNorm(unionLocalCx, unionLocalCy, roiW / 2, roiH / 2, roiW, roiH);
-      const targetPenalty = expected ? distanceNorm(unionCx, unionCy, expected.x, expected.y, roiW, roiH) : centerPenalty;
-      const fill = inkArea / Math.max(unionArea, 1);
-      const saneSize = union.width > roiW * 0.035 && union.height > roiH * 0.018 && unionArea < roiArea * 0.44;
-      if (!saneSize || fill < 0.010) return null;
-
-      let sizeBonus = 0;
-      if (master && expected && expected.widthMm && expected.heightMm) {
-        const wm = union.width / pxPerMm;
-        const hm = union.height / pxPerMm;
-        const wRatio = Math.abs(wm - expected.widthMm) / Math.max(expected.widthMm, 1);
-        const hRatio = Math.abs(hm - expected.heightMm) / Math.max(expected.heightMm, 1);
-        sizeBonus = (1 - clamp01((wRatio + hRatio) / 1.2)) * 160;
-      }
-
-      const proximity = 1 - clamp01(targetPenalty * 2.2);
-      const center = 1 - clamp01(centerPenalty * 1.7);
-      const score = (unionArea * 0.07) + (kept * 95) + (fill * 850) + (expected ? proximity * 260 : center * 140) + sizeBonus;
-      const confidence = clamp01((kept / 8) * 0.28 + Math.min(1, fill * 6.5) * 0.30 + (expected ? proximity * 0.32 : center * 0.27) + (sizeBonus > 0 ? 0.10 : 0.03));
-      return { union, points, kept, inkArea, score, confidence, method };
-    } finally {
-      contours.delete(); hierarchy.delete();
-    }
-  }
-
-  // ---------- Métricas, muestra correcta y suavizado ----------
-
-  function computeAlignmentMetricsFromPlain(patch, text, pxPerMm) {
-    const theta = degToRad(patch.angleDeg);
-    const ux = { x: Math.cos(theta), y: Math.sin(theta) };
-    const uy = { x: -Math.sin(theta), y: Math.cos(theta) };
-
-    const rel = { x: text.center.x - patch.center.x, y: text.center.y - patch.center.y };
-    const offsetXPx = rel.x * ux.x + rel.y * ux.y;
-    const offsetYPx = rel.x * uy.x + rel.y * uy.y;
-
-    const textVertices = text.vertices;
-    const projected = textVertices.map((p) => {
-      const d = { x: p.x - patch.center.x, y: p.y - patch.center.y };
-      return { x: d.x * ux.x + d.y * ux.y, y: d.x * uy.x + d.y * uy.y };
-    });
-    const xs = projected.map((p) => p.x);
-    const ys = projected.map((p) => p.y);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-
-    const halfW = patch.widthPx / 2;
-    const halfH = patch.heightPx / 2;
-    const left = (minX + halfW) / pxPerMm;
-    const right = (halfW - maxX) / pxPerMm;
-    const top = (minY + halfH) / pxPerMm;
-    const bottom = (halfH - maxY) / pxPerMm;
-
-    return {
-      offsetXmm: offsetXPx / pxPerMm,
-      offsetYmm: offsetYPx / pxPerMm,
-      angleDeg: normalizeAngle(text.angleDeg - patch.angleDeg),
-      edges: { left, right, top, bottom },
-      plain: {
-        horizontal: plainHorizontal(offsetXPx / pxPerMm),
-        vertical: plainVertical(offsetYPx / pxPerMm),
-      },
-    };
-  }
-
-  function saveMasterPatch() {
-    const ins = state.currentInspection;
-    if (!ins || !ins.patch || !ins.text || !ins.metrics) return;
-    if ((ins.text.confidence || 0) < 0.68) return;
-    state.master = {
-      savedAt: new Date().toISOString(),
-      patch: simplePatch(ins.patch),
-      text: simpleText(ins.text),
-      alignment: JSON.parse(JSON.stringify(ins.metrics)),
-      template: state.lastTextTemplateCandidate || null,
-    };
-    state.flow = "inspect";
-    state.smoothInspection = null;
-    state.manualTextMode = false;
-    state.manualTextOverride = null;
-    setMainState("INSPECCIONANDO", "ok");
-    updateFlowUi("Muestra correcta guardada. Ahora coloca los parches de producción para compararlos contra esa referencia.");
-  }
-
-  function smoothInspection(current) {
-    const now = performance.now();
-    if (!current || !current.patch) {
-      if (state.smoothInspection && now - state.lastValidInspectionAt < 450) {
-        return { ...state.smoothInspection, stale: true };
-      }
+      return best ? best.side : null;
+    } catch (err) {
+      console.warn(err);
       return null;
+    } finally {
+      [src, gray, blurred, binary, hierarchy].forEach((m) => { if (m) m.delete(); });
+      if (contours) contours.delete();
     }
-    state.lastValidInspectionAt = now;
-    if (!state.smoothInspection || !state.smoothInspection.patch) {
-      state.smoothInspection = current;
-      return current;
-    }
-    const prev = state.smoothInspection;
-    const alphaPatch = 0.24;
-    const alphaText = 0.22;
-    const patch = smoothPlainBox(prev.patch, current.patch, alphaPatch);
-    let text = current.text;
-    if (current.text && prev.text) text = smoothPlainBox(prev.text, current.text, alphaText);
-    if (text) text.confidence = current.text.confidence;
-
-    let metrics = null;
-    if (patch && text && state.calibration) metrics = computeAlignmentMetricsFromPlain(patch, text, state.calibration.pxPerMm);
-    const smoothed = { patch, text, metrics };
-    state.smoothInspection = smoothed;
-    return smoothed;
   }
 
-  function smoothPlainBox(prev, cur, alpha) {
-    const out = {
-      ...cur,
-      center: {
-        x: lerp(prev.center.x, cur.center.x, alpha),
-        y: lerp(prev.center.y, cur.center.y, alpha),
-      },
-      widthPx: lerp(prev.widthPx, cur.widthPx, alpha),
-      heightPx: lerp(prev.heightPx, cur.heightPx, alpha),
-      widthMm: lerp(prev.widthMm, cur.widthMm, alpha),
-      heightMm: lerp(prev.heightMm, cur.heightMm, alpha),
-      angleDeg: lerpAngle(prev.angleDeg, cur.angleDeg, alpha),
-    };
-    out.vertices = boxPoints(out.center, out.widthPx, out.heightPx, out.angleDeg);
-    return out;
-  }
-
-  function simplePatch(p) {
-    return { widthMm: p.widthMm, heightMm: p.heightMm, angleDeg: p.angleDeg };
-  }
-  function simpleText(t) {
-    return { widthMm: t.widthMm, heightMm: t.heightMm, angleDeg: t.angleDeg, confidence: t.confidence };
-  }
-
-  function buildPayload(card, stable, inspection) {
-    const tolerances = getTolerances();
-    const calibration = {
-      locked: Boolean(state.calibration),
-      pxPerMm: state.calibration ? state.calibration.pxPerMm : null,
-      livePxPerMm: card ? card.pxPerMm : null,
-      stable: stable.ok,
-      stabilityLabel: stable.label,
-      cardDetected: Boolean(card),
-      cardContrast: card ? card.contrast : null,
-    };
-
-    let verdict = "ESPERA";
-    let score = null;
-    let detectionConfidence = null;
-    let reason = "Inicia la cámara para comenzar.";
-    let stateLabel = "SIN CÁMARA";
-    let comparison = null;
-
-    if (state.flow === "card") {
-      stateLabel = "COLOCA TARJETA";
-      if (card && stable.ok) {
-        verdict = "ESPERA";
-        reason = "Tarjeta lista. Toca “Calibrar tarjeta 7×7”.";
-      } else if (card) {
-        verdict = "INESTABLE";
-        reason = "Tarjeta detectada. No muevas el celular ni tapes la tarjeta con el dedo.";
-      } else {
-        verdict = "INESTABLE";
-        reason = "No veo la tarjeta. Evita reflejos; el cuadro negro debe verse oscuro contra el fondo blanco.";
-      }
-    } else if (state.flow === "master") {
-      stateLabel = "GUARDA MUESTRA";
-      verdict = "MUESTRA";
-      if (!inspection || !inspection.patch) {
-        reason = "Coloca un parche bueno dentro del recuadro.";
-      } else if (!inspection.text || !inspection.metrics) {
-        reason = "Veo el parche, pero todavía no confirmo el texto. Puedes marcarlo manualmente una vez en la muestra buena.";
-      } else {
-        detectionConfidence = inspection.text.confidence || 0;
-        if (detectionConfidence < 0.68) {
-          reason = "Texto dudoso. Ajusta luz o usa “Marcar texto manual” antes de guardar la muestra.";
-        } else {
-          reason = "Lectura suficiente. Toca “Guardar parche bueno”.";
-        }
-      }
-    } else if (state.flow === "inspect") {
-      stateLabel = "INSPECCIONANDO";
-      verdict = "INESTABLE";
-      if (!inspection || !inspection.patch) {
-        reason = "Buscando el borde del parche. Acerca la prenda y evita sombras fuertes.";
-      } else if (!inspection.text || !inspection.metrics) {
-        verdict = "NO LEE";
-        reason = "Veo el parche, pero no confirmo el texto. No se rechaza: reintenta o marca el texto manualmente.";
-      } else {
-        detectionConfidence = inspection.text.confidence || 0;
-        comparison = compareWithMaster(inspection.metrics);
-        score = calculateScore(comparison || inspection.metrics, tolerances);
-        if (detectionConfidence < tolerances.minReadConfidence) {
-          verdict = "REVISAR";
-          reason = "Lectura insegura. No rechazar pieza todavía; repite con mejor luz o menor movimiento.";
-        } else if (score >= tolerances.scoreMin) {
-          verdict = "OK";
-          reason = state.master ? "Aprobado. Coincide con la muestra buena." : "Aprobado. Texto dentro de tolerancia.";
-        } else {
-          verdict = "MAL";
-          reason = state.master ? "Revisar. Se aleja de la muestra buena." : "Revisar. Texto fuera de tolerancia.";
-        }
-      }
-    }
-
-    return {
-      type: "inspection",
-      version: state.version,
-      session: state.session,
-      timestamp: new Date().toISOString(),
-      flow: state.flow,
-      state: stateLabel,
-      verdict,
-      score,
-      detectionConfidence,
-      reason,
-      calibration,
-      tolerances,
-      master: state.master ? {
-        savedAt: state.master.savedAt,
-        patch: state.master.patch,
-        text: state.master.text,
-        alignment: state.master.alignment,
-      } : null,
-      comparison,
-      measurements: inspection ? {
-        patch: inspection.patch || null,
-        text: inspection.text ? {
-          center: inspection.text.center,
-          widthMm: inspection.text.widthMm,
-          heightMm: inspection.text.heightMm,
-          angleDeg: inspection.text.angleDeg,
-          vertices: inspection.text.vertices,
-          bbox: inspection.text.bbox,
-          confidence: inspection.text.confidence,
-          method: inspection.text.method,
-        } : null,
-        alignment: inspection.metrics || null,
-      } : null,
-    };
-  }
-
-  function compareWithMaster(metrics) {
-    if (!state.master || !state.master.alignment || !metrics) return null;
-    const ref = state.master.alignment;
-    return {
-      offsetXmm: metrics.offsetXmm - ref.offsetXmm,
-      offsetYmm: metrics.offsetYmm - ref.offsetYmm,
-      angleDeg: normalizeAngle(metrics.angleDeg - ref.angleDeg),
-      edges: {
-        left: metrics.edges.left - ref.edges.left,
-        right: metrics.edges.right - ref.edges.right,
-        top: metrics.edges.top - ref.edges.top,
-        bottom: metrics.edges.bottom - ref.edges.bottom,
-      },
-      plain: {
-        horizontal: plainHorizontal(metrics.offsetXmm - ref.offsetXmm),
-        vertical: plainVertical(metrics.offsetYmm - ref.offsetYmm),
-      },
-    };
-  }
-
-  function calculateScore(metricsOrComparison, tolerances) {
-    const sx = clamp01(1 - Math.abs(metricsOrComparison.offsetXmm) / Math.max(tolerances.xMm, 0.001));
-    const sy = clamp01(1 - Math.abs(metricsOrComparison.offsetYmm) / Math.max(tolerances.yMm, 0.001));
-    const sa = clamp01(1 - Math.abs(metricsOrComparison.angleDeg) / Math.max(tolerances.angleDeg, 0.001));
-    return Math.round((sx * 0.40 + sy * 0.40 + sa * 0.20) * 100);
-  }
-
-  // ---------- Dibujo, UI y WebSocket ----------
-
-  function drawOverlay(payload, card, inspection) {
-    drawGuide(ctx);
-
-    if (card) {
-      drawPoly(ctx, card.expectedOuter ? boxPoints(card.expectedOuter.center, card.expectedOuter.size.width, card.expectedOuter.size.height, card.expectedOuter.angle) : [], "#0f766e", 2);
-      drawPoly(ctx, card.vertices, "#0b5fff", 3);
-      drawLabel(ctx, card.rect.center.x + 8, card.rect.center.y - 8, "Cuadro 5×5 detectado");
-    }
-
-    if (inspection && inspection.patch) {
-      drawPoly(ctx, inspection.patch.vertices, verdictColor(payload.verdict), 4);
-      drawCross(ctx, inspection.patch.center.x, inspection.patch.center.y, "#0b5fff", 18);
-      drawLabel(ctx, inspection.patch.center.x + 10, inspection.patch.center.y + 16, "Centro parche");
-    }
-
-    if (state.manualTextMode) drawManualSelection(ctx);
-
-    if (inspection && inspection.text) {
-      drawPoly(ctx, inspection.text.vertices, inspection.text.method === "manual" ? "#7c3aed" : "#b7791f", 3);
-      drawCross(ctx, inspection.text.center.x, inspection.text.center.y, "#b7791f", 14);
-      drawLabel(ctx, inspection.text.center.x + 10, inspection.text.center.y - 14, "Texto detectado");
-      if (inspection.patch) {
-        ctx.save();
-        ctx.strokeStyle = "#34495e";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([8, 6]);
-        ctx.beginPath();
-        ctx.moveTo(inspection.patch.center.x, inspection.patch.center.y);
-        ctx.lineTo(inspection.text.center.x, inspection.text.center.y);
-        ctx.stroke();
-        ctx.restore();
-      }
-    }
-    drawTopBanner(ctx, payload);
-  }
-
-  function drawGuide(ctx) {
+  function drawOverlay() {
     const w = dom.canvas.width;
     const h = dom.canvas.height;
-    if (!w || !h) return;
-    const size = Math.min(w, h) * 0.58;
-    const x = (w - size) / 2;
-    const y = (h - size) / 2;
     ctx.save();
-    const color = state.flow === "card" ? "rgba(15, 118, 110, 0.70)" : "rgba(11,95,255,0.65)";
+    ctx.lineWidth = Math.max(2, w / 600);
+    ctx.font = `${Math.max(15, w / 55)}px Inter, system-ui, sans-serif`;
+
+    if (state.master) {
+      const patch = pctToRect(state.master.patchPct);
+      const text = pctToRect(state.master.textPct);
+      drawRect(patch, "#1e63ff", "Guía del parche");
+      drawRect(text, "#16a34a", "Texto esperado");
+    }
+
+    if (state.patchCandidate && !state.master) drawRect(state.patchCandidate, "#1e63ff", "Parche bueno");
+    if (state.textCandidate && !state.master) drawRect(state.textCandidate, "#16a34a", "Texto bueno");
+
+    const insp = state.smoothInspection || state.lastInspection;
+    if (state.flow === "inspect" && insp && insp.foundText) {
+      drawRect(insp.foundText, "#d97706", "Texto encontrado");
+      drawCenterLine(insp.expectedText, insp.foundText);
+    }
+
+    if (state.markingMode && state.markStart && state.markCurrent) {
+      const r = normalizeRect({ x: state.markStart.x, y: state.markStart.y, w: state.markCurrent.x - state.markStart.x, h: state.markCurrent.y - state.markStart.y });
+      drawRect(r, state.markingMode === "patch" ? "#1e63ff" : "#16a34a", state.markingMode === "patch" ? "Dibujando parche" : "Dibujando texto");
+    }
+
+    if (state.flow === "master" && !state.patchCandidate) drawCenterHelp("Marca el contorno del parche bueno");
+    else if (state.flow === "master" && state.patchCandidate && !state.textCandidate) drawCenterHelp("Ahora marca solo el bloque de texto");
+    else if (state.flow === "inspect" && state.master) drawTopHelp("Coloca cada parche dentro de la guía azul");
+
+    ctx.restore();
+  }
+
+  function drawRect(r, color, label) {
+    ctx.save();
     ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = Math.max(3, dom.canvas.width / 420);
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.fillStyle = color;
+    const pad = 8;
+    const textW = ctx.measureText(label).width + pad * 2;
+    const labelH = 26;
+    ctx.fillRect(r.x, Math.max(0, r.y - labelH), textW, labelH);
+    ctx.fillStyle = "white";
+    ctx.fillText(label, r.x + pad, Math.max(18, r.y - 7));
+    ctx.restore();
+  }
+
+  function drawCenterLine(a, b) {
+    const ac = centerOf(a);
+    const bc = centerOf(b);
+    ctx.save();
+    ctx.strokeStyle = "#d97706";
     ctx.setLineDash([10, 8]);
-    ctx.strokeRect(x, y, size, size);
-    ctx.fillStyle = "rgba(255,255,255,0.86)";
-    ctx.fillRect(x + 10, y + 10, 390, 34);
-    ctx.fillStyle = state.flow === "card" ? "#0f766e" : "#0b5fff";
-    ctx.font = "800 15px system-ui";
-    let label = "Guía: tarjeta 7×7 cm";
-    if (state.flow === "master") label = "Guía: parche bueno de muestra";
-    if (state.flow === "inspect") label = "Guía: parche de producción";
-    ctx.fillText(label, x + 22, y + 32);
+    ctx.beginPath();
+    ctx.moveTo(ac.x, ac.y);
+    ctx.lineTo(bc.x, bc.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#16a34a";
+    ctx.beginPath(); ctx.arc(ac.x, ac.y, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#d97706";
+    ctx.beginPath(); ctx.arc(bc.x, bc.y, 7, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
 
-
-  function drawManualSelection(ctx) {
+  function drawCenterHelp(text) {
     ctx.save();
-    ctx.fillStyle = "rgba(124,58,237,0.12)";
-    ctx.strokeStyle = "#7c3aed";
-    ctx.lineWidth = 3;
-    ctx.setLineDash([8, 5]);
-    let r = state.manualTextOverride;
-    if (state.manualStart && state.manualCurrent) r = rectFromTwoPoints(state.manualStart, state.manualCurrent);
-    if (r) {
-      ctx.fillRect(r.x, r.y, r.width, r.height);
-      ctx.strokeRect(r.x, r.y, r.width, r.height);
-      drawLabel(ctx, r.x + 8, r.y - 8, "Texto marcado por operador");
-    } else {
-      drawLabel(ctx, 22, 90, "Arrastra sobre el texto");
-    }
+    ctx.fillStyle = "rgba(255,255,255,.86)";
+    ctx.strokeStyle = "#c8d8ff";
+    const bw = Math.min(dom.canvas.width - 60, 620);
+    const bh = 72;
+    const x = (dom.canvas.width - bw) / 2;
+    const y = (dom.canvas.height - bh) / 2;
+    roundRect(ctx, x, y, bw, bh, 18);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#123887";
+    ctx.textAlign = "center";
+    ctx.font = `${Math.max(18, dom.canvas.width / 52)}px Inter, system-ui, sans-serif`;
+    ctx.fillText(text, dom.canvas.width / 2, y + 45);
     ctx.restore();
   }
 
-  function drawTopBanner(ctx, payload) {
-    const text = `${payload.verdict} · ${payload.reason}`;
+  function drawTopHelp(text) {
     ctx.save();
-    ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
-    ctx.fillRect(12, 12, Math.min(dom.canvas.width - 24, 850), 48);
-    ctx.strokeStyle = "rgba(16,32,51,0.16)";
-    ctx.strokeRect(12, 12, Math.min(dom.canvas.width - 24, 850), 48);
-    ctx.fillStyle = verdictColor(payload.verdict);
-    ctx.font = "850 18px system-ui";
-    ctx.fillText(text.substring(0, 98), 24, 43);
+    ctx.fillStyle = "rgba(255,255,255,.88)";
+    ctx.strokeStyle = "#dbe3ef";
+    const bw = Math.min(dom.canvas.width - 50, 640);
+    const x = (dom.canvas.width - bw) / 2;
+    roundRect(ctx, x, 16, bw, 44, 14);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#172033";
+    ctx.textAlign = "center";
+    ctx.font = `${Math.max(16, dom.canvas.width / 64)}px Inter, system-ui, sans-serif`;
+    ctx.fillText(text, dom.canvas.width / 2, 44);
     ctx.restore();
   }
 
-  function updateUi(payload) {
-    state.lastPayload = payload;
-    const c = payload.calibration;
-    dom.liveScale.textContent = c.livePxPerMm ? `${c.livePxPerMm.toFixed(2)} px/mm` : "--";
-    dom.lockedScale.textContent = c.pxPerMm ? `${c.pxPerMm.toFixed(2)} px/mm` : "--";
-    dom.stability.textContent = c.stabilityLabel || "--";
-    dom.cardState.textContent = c.cardDetected ? "Detectada" : "No detectada";
-    dom.friendlyCard.textContent = c.cardDetected ? (c.stable ? "Lista" : "No mover") : "No detectada";
-    dom.friendlyScale.textContent = c.locked ? "Calibrada" : "Sin calibrar";
-    dom.friendlyMaster.textContent = state.master ? "Guardada" : "Pendiente";
-
-    dom.btnCalibrate.disabled = !(state.flow === "card" && state.liveCard && getScaleStability().ok);
-    const hasPatch = state.currentInspection && state.currentInspection.patch;
-    dom.btnMarkText.disabled = !((state.flow === "master" || state.flow === "inspect") && hasPatch);
-    dom.btnMarkText.textContent = state.manualTextMode ? "Cancelar marcado" : "Marcar texto manual";
-    const canSaveMaster = state.flow === "master" && state.currentInspection && state.currentInspection.text && (state.currentInspection.text.confidence || 0) >= 0.68;
-    dom.btnSaveMaster.disabled = !canSaveMaster;
-
-    setMainState(payload.state, statusMode(payload.verdict));
-    setVerdict(payload.verdict, payload.score, payload.detectionConfidence);
-    dom.reasonText.textContent = payload.reason;
-
-    const m = payload.measurements;
-    const displayMetrics = payload.comparison || (m && m.alignment ? m.alignment : null);
-    if (!displayMetrics) {
-      dom.dxValue.textContent = "--";
-      dom.dyValue.textContent = "--";
-      dom.angleValue.textContent = "--";
-      dom.edgeLeft.textContent = "--";
-      dom.edgeRight.textContent = "--";
-      dom.edgeTop.textContent = "--";
-      dom.edgeBottom.textContent = "--";
-    } else {
-      dom.dxValue.textContent = friendlyOffsetX(displayMetrics.offsetXmm);
-      dom.dyValue.textContent = friendlyOffsetY(displayMetrics.offsetYmm);
-      dom.angleValue.textContent = `${displayMetrics.angleDeg.toFixed(1)}°`;
-      dom.edgeLeft.textContent = fmtMm(displayMetrics.edges.left);
-      dom.edgeRight.textContent = fmtMm(displayMetrics.edges.right);
-      dom.edgeTop.textContent = fmtMm(displayMetrics.edges.top);
-      dom.edgeBottom.textContent = fmtMm(displayMetrics.edges.bottom);
+  function renderMeasurements() {
+    const insp = state.smoothInspection || state.lastInspection;
+    if (state.flow !== "inspect" || !insp) {
+      if (!state.master) {
+        setVerdict("ESPERA", "wait");
+        dom.qualityValue.textContent = "--%";
+        dom.readConfidence.textContent = "--%";
+        dom.reasonText.textContent = "Primero guarda una muestra buena.";
+        dom.dxValue.textContent = "--";
+        dom.dyValue.textContent = "--";
+        dom.visualMatch.textContent = "--";
+        dom.patchSize.textContent = "--";
+        dom.textSize.textContent = "--";
+      }
+      return;
     }
 
-    if (m && m.patch) dom.patchSize.textContent = `${m.patch.widthMm.toFixed(1)} × ${m.patch.heightMm.toFixed(1)} mm`;
-    else dom.patchSize.textContent = "--";
+    setVerdict(insp.verdict, insp.verdictClass);
+    dom.qualityValue.textContent = `${Math.round(insp.quality)}%`;
+    dom.readConfidence.textContent = `${Math.round(insp.readConfidence)}%`;
+    dom.reasonText.textContent = insp.reason;
+    dom.dxValue.textContent = insp.dxHuman;
+    dom.dyValue.textContent = insp.dyHuman;
+    dom.visualMatch.textContent = `${Math.round(insp.visualMatch)}%`;
+    dom.patchSize.textContent = formatSize(insp.patchRect);
+    dom.textSize.textContent = insp.foundText ? formatSize(insp.foundText) : "No leído";
+  }
 
-    if (m && m.text) {
-      dom.textSize.textContent = `${m.text.widthMm.toFixed(1)} × ${m.text.heightMm.toFixed(1)} mm`;
-      dom.friendlyText.textContent = `Detectado (${Math.round((m.text.confidence || 0) * 100)}%)`;
-    } else {
-      dom.textSize.textContent = "--";
-      dom.friendlyText.textContent = state.flow === "inspect" && m && m.patch ? "No confirmado" : "Pendiente";
+  function updateUi() {
+    const hasCamera = state.cameraRunning;
+    const hasPatch = Boolean(state.patchCandidate || state.master);
+    const hasText = Boolean(state.textCandidate || state.master);
+    const hasMaster = Boolean(state.master);
+
+    dom.btnMarkPatch.disabled = !hasCamera || state.flow === "inspect";
+    dom.btnMarkText.disabled = !hasCamera || !hasPatch || state.flow === "inspect";
+    dom.btnSaveMaster.disabled = !hasCamera || !state.patchCandidate || !state.textCandidate;
+    dom.btnStartInspect.disabled = !hasMaster;
+    dom.btnUsePatchScale.disabled = !(state.patchCandidate || state.master);
+    dom.btnCalibrateCard.disabled = !hasCamera || !state.cvReady;
+
+    setStep(dom.stepCamera, state.flow === "camera", hasCamera);
+    setStep(dom.stepMaster, state.flow === "master", hasMaster);
+    setStep(dom.stepInspect, state.flow === "inspect", false);
+
+    dom.friendlyPatch.textContent = hasPatch ? "Listo" : "Pendiente";
+    dom.friendlyText.textContent = hasText ? "Listo" : "Pendiente";
+    dom.friendlyMaster.textContent = hasMaster ? "Guardada" : "Pendiente";
+    dom.friendlyScale.textContent = state.pxPerMm ? `${state.scaleSource}` : "Opcional / sin mm";
+    dom.lockedScale.textContent = state.pxPerMm ? `${state.pxPerMm.toFixed(2)} px/mm · ${state.scaleSource}` : "Sin mm";
+
+    let instruction = "Toca “Iniciar cámara”. Luego coloca un parche correcto para crear la muestra maestra.";
+    let action = "Inicia la cámara del celular.";
+    if (state.flow === "master") {
+      if (!state.patchCandidate) {
+        instruction = "Coloca un parche que calidad considere correcto. Toca “Marcar parche bueno” y dibuja alrededor de todo el parche.";
+        action = "Marca primero el rectángulo completo del parche bueno.";
+      } else if (!state.textCandidate) {
+        instruction = "Ahora toca “Marcar texto bueno” y dibuja solo sobre las letras. No metas el borde.";
+        action = "Marca solo el bloque de texto del parche bueno.";
+      } else {
+        instruction = "Revisa que los rectángulos estén bien. Luego toca “Guardar muestra maestra”.";
+        action = "Guarda la muestra maestra para empezar a comparar producción.";
+      }
+    } else if (state.flow === "inspect") {
+      instruction = "Coloca cada parche dentro de la guía azul. El sistema buscará el texto en la zona aprendida y comparará contra la muestra.";
+      action = "Coloca el parche de producción dentro de la guía. Mantén el celular fijo.";
     }
+    if (state.markingMode) {
+      instruction = state.markingMode === "patch" ? "Arrastra con el dedo sobre TODO el parche." : "Arrastra con el dedo SOLO sobre el texto.";
+      action = instruction;
+    }
+    dom.operatorInstruction.textContent = instruction;
+    dom.nextAction.textContent = action;
   }
 
-  function setVerdict(verdict, score, confidence) {
-    dom.verdict.textContent = verdict;
-    dom.verdict.className = "verdict " + verdictClass(verdict);
-    dom.scoreValue.textContent = Number.isFinite(score) ? `${score}%` : "--%";
-    dom.readConfidence.textContent = Number.isFinite(confidence) ? `${Math.round(confidence * 100)}%` : "--%";
+  function setStep(el, active, done) {
+    el.classList.toggle("active", active);
+    el.classList.toggle("done", done && !active);
   }
 
-  function setMainState(text, mode) {
+  function setMainState(text, cls) {
     dom.mainState.textContent = text;
-    dom.statusDot.className = `status-dot ${mode || "unstable"}`;
+    dom.statusDot.className = `status-dot ${cls || "unstable"}`;
   }
 
-  function maybeSend(payload) {
+  function setVerdict(text, cls) {
+    dom.verdict.textContent = text;
+    dom.verdict.className = `verdict ${cls || "wait"}`;
+  }
+
+  function publishTelemetryThrottled() {
     const now = Date.now();
-    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-    if (now - state.lastSentAt < 220) return;
-    state.ws.send(JSON.stringify(payload));
+    if (now - state.lastSentAt < 420) return;
     state.lastSentAt = now;
+    const insp = state.smoothInspection || state.lastInspection;
+    const payload = {
+      type: "inspection",
+      version: state.version,
+      ts: now,
+      session: state.session,
+      flow: state.flow,
+      cameraRunning: state.cameraRunning,
+      masterSaved: Boolean(state.master),
+      scale: state.pxPerMm,
+      scaleSource: state.scaleSource,
+      verdict: insp ? insp.verdict : (state.master ? "ESPERA" : "SIN MUESTRA"),
+      verdictClass: insp ? insp.verdictClass : "wait",
+      quality: insp ? insp.quality : null,
+      readConfidence: insp ? insp.readConfidence : null,
+      visualMatch: insp ? insp.visualMatch : null,
+      reason: insp ? insp.reason : dom.reasonText.textContent,
+      dxHuman: insp ? insp.dxHuman : null,
+      dyHuman: insp ? insp.dyHuman : null,
+      dxPct: insp ? insp.dxPct : null,
+      dyPct: insp ? insp.dyPct : null,
+      patchRect: insp ? rectToPct(insp.patchRect) : (state.master ? state.master.patchPct : null),
+      expectedText: insp ? rectToPct(insp.expectedText) : (state.master ? state.master.textPct : null),
+      foundText: insp && insp.foundText ? rectToPct(insp.foundText) : null,
+    };
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify(payload));
+    }
   }
 
   function connectWebSocket() {
@@ -1365,146 +891,104 @@
     const url = `${proto}://${location.host}/ws/${state.session}/capture`;
     try {
       state.ws = new WebSocket(url);
-      state.ws.onopen = () => { state.wsConnected = true; };
-      state.ws.onclose = () => {
-        state.wsConnected = false;
-        setTimeout(connectWebSocket, 1500);
-      };
-      state.ws.onerror = () => { state.wsConnected = false; };
+      state.ws.addEventListener("open", () => { state.wsConnected = true; });
+      state.ws.addEventListener("close", () => { state.wsConnected = false; setTimeout(connectWebSocket, 1600); });
+      state.ws.addEventListener("error", () => { state.wsConnected = false; });
     } catch (err) {
-      console.error(err);
-      setTimeout(connectWebSocket, 2500);
+      console.warn(err);
+      setTimeout(connectWebSocket, 2000);
     }
   }
 
-  // ---------- Utilidades visuales/matemáticas ----------
-
-  function cloneRotatedRect(rect) {
-    return { center: { x: rect.center.x, y: rect.center.y }, size: { width: rect.size.width, height: rect.size.height }, angle: rect.angle };
+  function saveMasterToStorage() {
+    if (!state.master) return;
+    localStorage.setItem("inspector_v6_master", JSON.stringify(state.master));
   }
 
-  function rectPoints(rect) {
-    if (!rect) return [];
-    const pts = cv.RotatedRect.points(rect);
-    return pts.map((p) => ({ x: p.x, y: p.y }));
+  function saveScaleToStorage() {
+    localStorage.setItem("inspector_v6_scale", JSON.stringify({ pxPerMm: state.pxPerMm, scaleSource: state.scaleSource }));
   }
 
-  function boxPoints(center, width, height, angleDeg) {
-    const a = degToRad(angleDeg || 0);
-    const ux = { x: Math.cos(a), y: Math.sin(a) };
-    const uy = { x: -Math.sin(a), y: Math.cos(a) };
-    const hw = width / 2;
-    const hh = height / 2;
-    return [
-      { x: center.x - ux.x * hw - uy.x * hh, y: center.y - ux.y * hw - uy.y * hh },
-      { x: center.x + ux.x * hw - uy.x * hh, y: center.y + ux.y * hw - uy.y * hh },
-      { x: center.x + ux.x * hw + uy.x * hh, y: center.y + ux.y * hw + uy.y * hh },
-      { x: center.x - ux.x * hw + uy.x * hh, y: center.y - ux.y * hw + uy.y * hh },
-    ];
-  }
-
-  function normalizedRectInfo(rect) {
-    let width = Math.max(rect.size.width, 1);
-    let height = Math.max(rect.size.height, 1);
-    let angle = rect.angle;
-    if (width < height) {
-      const tmp = width; width = height; height = tmp; angle += 90;
+  function loadMasterFromStorage() {
+    try {
+      const scaleRaw = localStorage.getItem("inspector_v6_scale");
+      if (scaleRaw) {
+        const s = JSON.parse(scaleRaw);
+        state.pxPerMm = s.pxPerMm || null;
+        state.scaleSource = s.scaleSource || "Sin mm";
+      }
+      const raw = localStorage.getItem("inspector_v6_master");
+      if (!raw) return;
+      state.master = JSON.parse(raw);
+      if (state.master.pxPerMm) {
+        state.pxPerMm = state.master.pxPerMm;
+        state.scaleSource = state.master.scaleSource || "Muestra";
+      }
+      state.flow = "inspect";
+    } catch (err) {
+      console.warn("No se pudo cargar muestra", err);
     }
-    return { center: { x: rect.center.x, y: rect.center.y }, width, height, angle: normalizeAngle(angle) };
   }
 
-  function drawPoly(ctx, points, color, lineWidth) {
-    if (!points || points.length < 2) return;
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineWidth || 2;
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
-    ctx.closePath(); ctx.stroke(); ctx.restore();
+  function rectToPct(r) {
+    return { x: r.x / dom.canvas.width, y: r.y / dom.canvas.height, w: r.w / dom.canvas.width, h: r.h / dom.canvas.height };
   }
 
-  function drawCross(ctx, x, y, color, size) {
-    ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
-    ctx.moveTo(x - size, y); ctx.lineTo(x + size, y); ctx.moveTo(x, y - size); ctx.lineTo(x, y + size);
-    ctx.stroke(); ctx.restore();
+  function pctToRect(p) {
+    return { x: p.x * dom.canvas.width, y: p.y * dom.canvas.height, w: p.w * dom.canvas.width, h: p.h * dom.canvas.height };
   }
 
-  function drawLabel(ctx, x, y, text) {
-    ctx.save(); ctx.font = "800 13px system-ui";
-    const width = ctx.measureText(text).width + 14;
-    ctx.fillStyle = "rgba(255,255,255,0.90)"; ctx.fillRect(x, y - 17, width, 22);
-    ctx.fillStyle = "#102033"; ctx.fillText(text, x + 7, y - 2); ctx.restore();
+  function cropToDataUrl(r) {
+    const rr = clampRectToCanvas(r);
+    const c = document.createElement("canvas");
+    c.width = Math.max(8, Math.round(rr.w));
+    c.height = Math.max(8, Math.round(rr.h));
+    const cctx = c.getContext("2d");
+    cctx.drawImage(state.rawCanvas, rr.x, rr.y, rr.w, rr.h, 0, 0, c.width, c.height);
+    return c.toDataURL("image/png");
   }
 
-  function unionRect(a, b) {
-    const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
-    const right = Math.max(a.x + a.width, b.x + b.width), bottom = Math.max(a.y + a.height, b.y + b.height);
-    return { x, y, width: right - x, height: bottom - y };
+  function safeCvRect(r, maxW, maxH) {
+    const rr = clipRect({ x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) }, { x: 0, y: 0, w: maxW, h: maxH });
+    return new cv.Rect(rr.x, rr.y, Math.max(1, rr.w), Math.max(1, rr.h));
   }
 
-  function distanceNorm(x1, y1, x2, y2, w, h) {
-    const d = Math.hypot(x1 - x2, y1 - y2);
-    return d / Math.hypot(w, h);
+  function formatSize(r) {
+    if (!r) return "--";
+    if (state.pxPerMm) return `${(r.w / state.pxPerMm).toFixed(1)} × ${(r.h / state.pxPerMm).toFixed(1)} mm`;
+    return `${r.w.toFixed(0)} × ${r.h.toFixed(0)} px`;
   }
 
-  function normalizeAngle(angle) {
-    let a = angle;
-    while (a > 90) a -= 180;
-    while (a < -90) a += 180;
-    if (a > 45) a -= 90;
-    if (a < -45) a += 90;
-    return a;
+  function centerOf(r) { return { x: r.x + r.w / 2, y: r.y + r.h / 2 }; }
+  function normalizeRect(r) {
+    const x = r.w < 0 ? r.x + r.w : r.x;
+    const y = r.h < 0 ? r.y + r.h : r.y;
+    return clampRectToCanvas({ x, y, w: Math.abs(r.w), h: Math.abs(r.h) });
   }
-
-  function plainHorizontal(mm) {
-    if (!Number.isFinite(mm) || Math.abs(mm) < 0.15) return "centrado";
-    return mm > 0 ? "a la derecha" : "a la izquierda";
+  function clampRectToCanvas(r) { return clipRect(r, { x: 0, y: 0, w: dom.canvas.width, h: dom.canvas.height }); }
+  function clipRect(r, bounds) {
+    const x = clamp(r.x, bounds.x, bounds.x + bounds.w);
+    const y = clamp(r.y, bounds.y, bounds.y + bounds.h);
+    const x2 = clamp(r.x + r.w, bounds.x, bounds.x + bounds.w);
+    const y2 = clamp(r.y + r.h, bounds.y, bounds.y + bounds.h);
+    return { x, y, w: Math.max(0, x2 - x), h: Math.max(0, y2 - y) };
   }
-  function plainVertical(mm) {
-    if (!Number.isFinite(mm) || Math.abs(mm) < 0.15) return "centrado";
-    return mm > 0 ? "abajo" : "arriba";
+  function rectInside(inner, outer) {
+    return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
   }
-  function friendlyOffsetX(mm) {
-    if (!Number.isFinite(mm)) return "--";
-    if (Math.abs(mm) < 0.15) return state.master ? "Igual que muestra" : "Centrado";
-    return `${Math.abs(mm).toFixed(1)} mm ${mm > 0 ? "derecha" : "izquierda"}`;
-  }
-  function friendlyOffsetY(mm) {
-    if (!Number.isFinite(mm)) return "--";
-    if (Math.abs(mm) < 0.15) return state.master ? "Igual que muestra" : "Centrado";
-    return `${Math.abs(mm).toFixed(1)} mm ${mm > 0 ? "abajo" : "arriba"}`;
-  }
-
-  function verdictColor(v) {
-    if (v === "OK") return "#12805c";
-    if (v === "MAL") return "#c53030";
-    if (v === "REVISAR") return "#b7791f";
-    if (v === "NO LEE") return "#718096";
-    if (v === "MUESTRA") return "#0f766e";
-    return "#718096";
-  }
-  function verdictClass(v) {
-    if (v === "OK") return "ok";
-    if (v === "MAL") return "bad";
-    if (v === "REVISAR") return "revisar";
-    if (v === "NO LEE") return "nolee";
-    if (v === "MUESTRA") return "muestra";
-    return "unstable";
-  }
-  function statusMode(v) {
-    if (v === "OK") return "ok";
-    if (v === "MAL") return "bad";
-    if (v === "REVISAR") return "revisar";
-    if (v === "NO LEE") return "nolee";
-    if (v === "MUESTRA") return "muestra";
-    return "warn";
-  }
-
-  function degToRad(deg) { return deg * Math.PI / 180; }
+  function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
   function lerp(a, b, t) { return a + (b - a) * t; }
-  function lerpAngle(a, b, t) { return a + normalizeAngle(b - a) * t; }
-  function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
-  function clamp01(v) { return clamp(v, 0, 1); }
-  function fmtMm(v) { return Number.isFinite(v) ? `${v.toFixed(1)} mm` : "--"; }
+  function roundRect(c, x, y, w, h, r) {
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.lineTo(x + w - r, y);
+    c.quadraticCurveTo(x + w, y, x + w, y + r);
+    c.lineTo(x + w, y + h - r);
+    c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    c.lineTo(x + r, y + h);
+    c.quadraticCurveTo(x, y + h, x, y + h - r);
+    c.lineTo(x, y + r);
+    c.quadraticCurveTo(x, y, x + r, y);
+    c.closePath();
+  }
 })();
