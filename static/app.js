@@ -12,8 +12,8 @@
   };
 
   const ctx = els.canvas.getContext('2d', { willReadFrequently: true });
-  const STORAGE_KEY = 'inspector_v10_master_sample';
-  const SESSION_KEY = 'inspector_v10_session_code';
+  const STORAGE_KEY = 'inspector_v11_master_sample';
+  const SESSION_KEY = 'inspector_v11_session_code';
 
   const state = {
     cameraReady: false,
@@ -27,6 +27,7 @@
     history: [],
     telemetryLast: 0,
     lastReading: null,
+    lastDecision: null,
     stableReading: null,
     master: loadMaster(),
     lastCanvasDataUrl: null
@@ -125,7 +126,7 @@
         state.lastReading = reading;
         updateHistory(reading);
         const decision = decide(reading);
-        drawOverlay(reading, decision);
+        state.lastDecision = decision;
         updateUI(reading, decision);
         maybeSendTelemetry(reading, decision, ts);
       } catch (err) {
@@ -133,6 +134,9 @@
         setStatus('ERROR DE LECTURA', 'Algo falló durante el análisis. Reinicia cámara si se repite.', 'state-error');
       }
     }
+    // V11: el overlay se dibuja SIEMPRE después del video. Antes se borraba entre frames
+    // y por eso parecía que no enmarcaba nada, aunque internamente sí detectaba el parche.
+    drawOverlay(state.lastReading, state.lastDecision || { result: 'BUSCANDO', title: 'BUSCANDO', message: 'Coloca el parche dentro de la guía.' });
     requestAnimationFrame(loop);
   }
 
@@ -489,7 +493,7 @@
     } else if (!reading.text || reading.text.confidence < 48) {
       result = 'NO_LEE';
       title = 'NO LEE TEXTO';
-      message = 'Veo el parche, pero el texto es pequeño o tiene poco contraste. Acerca un poco, centra y evita sombras.';
+      message = 'Parche en azul. Estoy buscando el texto en la zona naranja inferior. Acerca un poco, enfoca y evita sombras.';
       cls = 'state-no-read';
     } else if (withPatch.length < 8 || withText.length < 6 || stable < 60) {
       result = 'CONFIRMANDO';
@@ -584,45 +588,115 @@
     els.btnInspect.disabled = false;
     els.btnSaveMaster.disabled = true;
     updateSteps(3);
-    setStatus('MUESTRA GUARDADA', 'Ahora puedes inspeccionar producción contra esta referencia.', 'state-ok');
+    setStatus('MUESTRA GUARDADA', 'Ahora puedes inspeccionar producción contra esta referencia. El parche queda enmarcado en verde y el texto en naranja.', 'state-ok');
   }
 
   function drawOverlay(reading, decision) {
-    if (!els.showDebug.checked) return;
-    const { guide } = reading;
+    const w = els.canvas.width, h = els.canvas.height;
+    const guide = reading?.guide || getGuideRect(w, h);
     ctx.save();
-    ctx.lineWidth = Math.max(3, els.canvas.width / 260);
-    ctx.setLineDash([12, 8]);
+
+    // Oscurecemos apenas fuera de la guía para que el operador sepa exactamente dónde poner la pieza.
+    ctx.fillStyle = 'rgba(15, 23, 42, .12)';
+    ctx.fillRect(0, 0, w, h);
+    ctx.clearRect(guide.x, guide.y, guide.w, guide.h);
+
+    ctx.lineWidth = Math.max(5, w / 190);
+    ctx.setLineDash([18, 10]);
     ctx.strokeStyle = '#2563eb';
     ctx.strokeRect(guide.x, guide.y, guide.w, guide.h);
     ctx.setLineDash([]);
+    drawBadge('GUÍA DE TRABAJO', guide.x + 10, guide.y + 12, '#2563eb');
 
-    if (reading.patch) {
-      drawRect(reading.patch.rect, '#2563eb', 'Parche');
+    if (reading?.patch) {
+      drawRect(reading.patch.rect, '#00a86b', 'PARCHE DETECTADO', true);
+
       if (state.master && reading.patch.rect) {
         const exp = normToRect(state.master.textNorm, reading.patch.rect);
-        ctx.setLineDash([8, 6]);
-        drawRect(exp, '#94a3b8', 'Texto esperado');
+        ctx.setLineDash([10, 7]);
+        drawRect(exp, '#64748b', 'TEXTO ESPERADO', false);
+        ctx.setLineDash([]);
+      } else if (!reading.text) {
+        const search = lowerTextPreview(reading.patch.rect);
+        ctx.setLineDash([12, 7]);
+        drawRect(search, '#f97316', 'BUSCO TEXTO AQUÍ', false);
         ctx.setLineDash([]);
       }
+    } else {
+      drawCenterHint('Coloca el parche completo dentro de la guía azul');
     }
-    if (reading.text) drawRect(reading.text.rect, '#f97316', 'Texto leído');
 
-    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    if (reading?.text) {
+      drawRect(reading.text.rect, '#f97316', 'TEXTO LEÍDO', true);
+    }
+
+    const panelW = Math.min(w - 24, 760);
+    const panelH = Math.max(62, h * 0.095);
+    ctx.fillStyle = 'rgba(255,255,255,.94)';
     ctx.strokeStyle = '#d0d7e2';
-    roundRect(ctx, 12, els.canvas.height - 72, Math.min(els.canvas.width - 24, 620), 54, 14, true, true);
+    ctx.lineWidth = 2;
+    roundRect(ctx, 12, h - panelH - 12, panelW, panelH, 18, true, true);
     ctx.fillStyle = statusColor(decision.result);
-    ctx.font = `${Math.max(22, els.canvas.width / 34)}px system-ui, -apple-system, sans-serif`;
-    ctx.fillText(decision.title, 28, els.canvas.height - 38);
+    ctx.font = `900 ${Math.max(24, w / 30)}px system-ui, -apple-system, sans-serif`;
+    ctx.fillText(decision.title || 'BUSCANDO', 30, h - panelH + 28);
+    ctx.fillStyle = '#475467';
+    ctx.font = `800 ${Math.max(14, w / 70)}px system-ui, -apple-system, sans-serif`;
+    ctx.fillText(shortMessage(decision.message || ''), 30, h - 23);
     ctx.restore();
   }
 
-  function drawRect(r, color, label) {
+  function lowerTextPreview(patch) {
+    return {
+      x: patch.x + patch.w * 0.08,
+      y: patch.y + patch.h * 0.58,
+      w: patch.w * 0.84,
+      h: patch.h * 0.30
+    };
+  }
+
+  function drawRect(r, color, label, solid) {
+    ctx.save();
     ctx.strokeStyle = color;
-    ctx.fillStyle = color;
+    ctx.lineWidth = solid ? Math.max(6, els.canvas.width / 170) : Math.max(4, els.canvas.width / 230);
+    ctx.shadowColor = 'rgba(0,0,0,.28)';
+    ctx.shadowBlur = solid ? 10 : 4;
     ctx.strokeRect(r.x, r.y, r.w, r.h);
-    ctx.font = `${Math.max(14, els.canvas.width / 52)}px system-ui, -apple-system, sans-serif`;
-    ctx.fillText(label, r.x + 4, Math.max(18, r.y - 6));
+    ctx.shadowBlur = 0;
+    drawBadge(label, r.x + 8, Math.max(10, r.y - 34), color);
+    ctx.restore();
+  }
+
+  function drawBadge(label, x, y, color) {
+    ctx.save();
+    ctx.font = `900 ${Math.max(15, els.canvas.width / 62)}px system-ui, -apple-system, sans-serif`;
+    const padX = 10, padY = 7;
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(255,255,255,.95)';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    roundRect(ctx, x, y, tw + padX * 2, Math.max(30, els.canvas.width / 40), 12, true, true);
+    ctx.fillStyle = color;
+    ctx.fillText(label, x + padX, y + Math.max(21, els.canvas.width / 55));
+    ctx.restore();
+  }
+
+  function drawCenterHint(text) {
+    ctx.save();
+    ctx.font = `900 ${Math.max(22, els.canvas.width / 38)}px system-ui, -apple-system, sans-serif`;
+    const tw = ctx.measureText(text).width;
+    const x = Math.max(18, (els.canvas.width - tw) / 2 - 16);
+    const y = els.canvas.height / 2 - 30;
+    ctx.fillStyle = 'rgba(255,255,255,.94)';
+    ctx.strokeStyle = '#bfd2ff';
+    roundRect(ctx, x, y, Math.min(tw + 32, els.canvas.width - 36), 70, 18, true, true);
+    ctx.fillStyle = '#1d4ed8';
+    ctx.fillText(text, x + 16, y + 44);
+    ctx.restore();
+  }
+
+  function shortMessage(msg) {
+    const s = String(msg || '');
+    return s.length > 72 ? s.slice(0, 69) + '…' : s;
   }
 
   function statusColor(result) {
@@ -642,7 +716,7 @@
     els.deltaX.textContent = cmp ? directionX(cmp.dx) : '--';
     els.deltaY.textContent = cmp ? directionY(cmp.dy) : '--';
     els.diagnostic.textContent = decision.message;
-    const canSave = decision.result === 'MUESTRA_LISTA' || (!state.master && reading.patch && reading.text && reading.text.confidence > 62);
+    const canSave = decision.result === 'MUESTRA_LISTA';
     els.btnSaveMaster.disabled = !canSave;
     if (!state.master) {
       if (!reading.patch) els.btnSaveMaster.textContent = 'Esperando parche';
@@ -678,7 +752,7 @@
     return {
       type: 'telemetry',
       session: state.session,
-      version: '10.0.0',
+      version: '11.0.0',
       mode: state.mode,
       result: decision.result,
       title: decision.title,

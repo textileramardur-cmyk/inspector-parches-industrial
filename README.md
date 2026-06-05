@@ -1,27 +1,28 @@
-# Inspector de Parches Industrial · V10 lectura inferior
+# Inspector de Parches Industrial · V11 visual estable
 
-Versión pensada para ambiente real de piso con fondo liso/contrastante, sin dibujo manual y sin tarjeta 7x7 obligatoria.
+Versión corregida para que el operador **vea siempre** qué está detectando la app.
 
-## Cambios V10
+## Cambios clave
 
-- La instrucción ya no tapa el parche dentro de la cámara.
-- El botón de muestra ahora dice `Esperando parche`, `Esperando texto`, `Confirmando lectura` o `Guardar muestra buena`.
-- Detector de texto mejorado para parches con escudo y texto pequeño en la placa inferior.
-- El texto se busca primero en la zona inferior del parche, no en todo el escudo.
-- Umbrales más tolerantes para texto pequeño y bajo contraste.
-- Sigue sin rechazar si la lectura no es confiable.
+- El overlay ya no desaparece entre frames.
+- La guía azul siempre se dibuja encima del video.
+- El parche detectado se enmarca en verde.
+- El texto detectado se enmarca en naranja.
+- Si no lee texto, se muestra la zona inferior donde está buscando.
+- No permite guardar muestra buena si no hay lectura estable de texto.
+- El mensaje de estado explica si el problema es escena, parche o texto.
 
-## Flujo
+## Uso
 
-1. Abrir `/captura` en celular.
+1. Abrir `/captura` en el celular.
 2. Iniciar cámara.
-3. Colocar un parche bueno sobre fondo liso y contrastante.
-4. Esperar a que el botón diga `Guardar muestra buena`.
-5. Guardar muestra.
-6. Iniciar inspección de producción.
-7. Abrir `/monitor` en PC y conectar con el código de sesión.
+3. Colocar el parche completo dentro de la guía azul.
+4. Esperar que el parche quede enmarcado en verde.
+5. Esperar que el texto quede enmarcado en naranja.
+6. Cuando diga `MUESTRA LISTA`, guardar la muestra buena.
+7. Iniciar inspección de producción.
 
-## Despliegue Render
+## Render
 
 Build command:
 

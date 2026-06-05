@@ -87,3 +87,9 @@ select{border:1px solid var(--line);border-radius:14px;min-height:46px;backgroun
 /* V10: la burbuja dentro de la cámara tapaba parte del parche en móvil. La instrucción vive en el estado, no encima de la pieza. */
 .guide-label{display:none!important}
 .btn-success:disabled{background:#dbe5f4!important;color:#64748b!important;opacity:1!important}
+
+
+/* V11: el canvas debe sentirse como instrumento de medición, no como una foto muda. */
+.stage-wrap{border:3px solid #9db7f7;box-shadow:inset 0 0 0 2px rgba(37,99,235,.18)}
+#canvas{image-rendering:auto;}
+.status-strip{position:relative;z-index:2}
